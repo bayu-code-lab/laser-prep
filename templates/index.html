@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Laser Prep — Siapkan file untuk EZCAD2</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --text:#e7ebf2; --muted:#98a1b3; --accent:#ff7a45; --accent2:#3b82f6; --ok:#22c55e; --warn:#f59e0b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+  header{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+  header h1{font-size:17px;margin:0;font-weight:650}
+  header .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:2px 8px;border-radius:999px}
+  .wrap{max-width:1080px;margin:0 auto;padding:22px;display:grid;grid-template-columns:360px 1fr;gap:22px}
+  @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 14px}
+  label{display:block;font-size:13px;margin:12px 0 6px;color:var(--text)}
+  .hint{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.45}
+  input[type=number],select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:9px 10px;border-radius:9px;font-size:14px}
+  .seg{display:flex;gap:8px}
+  .seg button{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--muted);padding:10px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:600}
+  .seg button.active{background:var(--accent);border-color:var(--accent);color:#1a0f08}
+  .drop{margin-top:6px;border:1.5px dashed var(--line);border-radius:12px;padding:22px;text-align:center;color:var(--muted);cursor:pointer;transition:.15s;background:var(--panel2)}
+  .drop.hover{border-color:var(--accent);color:var(--text);background:#221a15}
+  .drop b{color:var(--text)}
+  .row{display:flex;gap:10px}
+  .row>div{flex:1}
+  .check{display:flex;align-items:center;gap:8px;margin:10px 0;font-size:13px;color:var(--text);cursor:pointer}
+  .check input{width:16px;height:16px;accent-color:var(--accent)}
+  .go{margin-top:16px;width:100%;background:var(--accent);border:none;color:#1a0f08;font-weight:700;padding:12px;border-radius:10px;font-size:15px;cursor:pointer}
+  .go:disabled{opacity:.5;cursor:default}
+  .opts{border-top:1px solid var(--line);margin-top:14px;padding-top:6px}
+  .previews{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .pv{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px;min-height:220px;display:flex;flex-direction:column}
+  .pv h3{font-size:12px;color:var(--muted);margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em}
+  .pv .imgbox{flex:1;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:8px;overflow:hidden;min-height:180px}
+  .pv img{max-width:100%;max-height:320px;display:block}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .chip{font-size:12px;background:var(--panel2);border:1px solid var(--line);padding:6px 10px;border-radius:999px;color:var(--muted)}
+  .chip b{color:var(--text)}
+  .dl{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+  .dl a{background:var(--accent2);color:#fff;text-decoration:none;padding:10px 14px;border-radius:9px;font-size:14px;font-weight:600}
+  .dl a.sec{background:var(--panel2);border:1px solid var(--line);color:var(--text)}
+  .warns{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+  .warn{background:#2a2110;border:1px solid #6b4e12;color:#f5d59a;font-size:13px;padding:9px 12px;border-radius:9px}
+  .err{background:#2a1414;border:1px solid #7a2626;color:#f3b0b0;font-size:13px;padding:10px 12px;border-radius:9px;margin-top:12px}
+  .empty{color:var(--muted);font-size:14px;text-align:center;padding:40px 10px}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid #1a0f08;border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔧 Laser Prep</h1>
+  <span class="tag">file pelanggan → import-ready EZCAD2</span>
+</header>
+
+<div class="wrap">
+  <!-- KIRI: kontrol -->
+  <div class="card">
+    <h2>1 · Jenis pekerjaan</h2>
+    <div class="seg" id="jobseg">
+      <button data-job="mopa" class="active">Logo → Vektor<br><small>(besi / MOPA)</small></button>
+      <button data-job="uv">Foto → Grayscale<br><small>(kaca / UV)</small></button>
+    </div>
+
+    <div class="drop" id="drop">
+      <div><b>Klik / seret file ke sini</b></div>
+      <div class="hint" id="dropinfo">MOPA: JPG, PNG, SVG, DXF · UV: JPG, PNG, TIFF</div>
+    </div>
+    <input type="file" id="file" hidden />
+
+    <label>Lebar target (mm)</label>
+    <input type="number" id="width_mm" value="40" min="1" step="1" />
+    <div class="hint">Ukuran fisik hasil ukiran. Rasio tinggi dijaga otomatis.</div>
+
+    <!-- opsi MOPA -->
+    <div class="opts" id="opts-mopa">
+      <label class="check"><input type="checkbox" id="auto_threshold" checked /> Threshold otomatis (Otsu)</label>
+      <div id="thrbox" style="display:none">
+        <label>Threshold manual (0–255)</label>
+        <input type="number" id="threshold" value="128" min="0" max="255" />
+      </div>
+      <label class="check"><input type="checkbox" id="invert" /> Balik warna (subjek terang di latar gelap)</label>
+      <label>Buang bintik kecil (filter speckle)</label>
+      <input type="number" id="filter_speckle" value="4" min="0" max="30" />
+      <div class="hint">Naikkan bila banyak noise/titik. Turunkan bila detail halus ikut hilang.</div>
+    </div>
+
+    <!-- opsi UV -->
+    <div class="opts" id="opts-uv" style="display:none">
+      <div class="row">
+        <div>
+          <label>DPI</label>
+          <input type="number" id="dpi" value="600" min="72" max="2400" step="1" />
+        </div>
+        <div>
+          <label>Gamma</label>
+          <input type="number" id="gamma" value="1.0" min="0.2" max="3" step="0.1" />
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="autocontrast" checked /> Auto-kontras (auto levels)</label>
+      <label class="check"><input type="checkbox" id="clahe" /> CLAHE (kontras lokal, untuk foto)</label>
+      <label class="check"><input type="checkbox" id="invert_uv" /> Balik (negatif)</label>
+      <label class="check"><input type="checkbox" id="remove_bg" /> Hapus background (perlu rembg)</label>
+      <div class="hint">Dithering/halftone tidak dilakukan di sini — atur di EZCAD2 saat import bitmap.</div>
+    </div>
+
+    <button class="go" id="go" disabled>Proses</button>
+  </div>
+
+  <!-- KANAN: hasil -->
+  <div class="card">
+    <h2>2 · Hasil</h2>
+    <div id="result">
+      <div class="empty">Pilih jenis pekerjaan, unggah file, lalu tekan <b>Proses</b>.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let job = "mopa";
+let picked = null;
+const $ = s => document.querySelector(s);
+
+document.querySelectorAll("#jobseg button").forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll("#jobseg button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active"); job=b.dataset.job;
+    $("#opts-mopa").style.display = job==="mopa"?"block":"none";
+    $("#opts-uv").style.display = job==="uv"?"block":"none";
+    $("#dropinfo").textContent = job==="mopa"
+      ? "MOPA: JPG, PNG, SVG, DXF" : "UV: JPG, PNG, TIFF";
+  };
+});
+$("#auto_threshold").onchange = e => { $("#thrbox").style.display = e.target.checked?"none":"block"; };
+
+const drop=$("#drop"), fileInput=$("#file");
+drop.onclick=()=>fileInput.click();
+["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("hover");}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hover");}));
+drop.addEventListener("drop",e=>{ if(e.dataTransfer.files.length){ setFile(e.dataTransfer.files[0]); }});
+fileInput.onchange=e=>{ if(e.target.files.length) setFile(e.target.files[0]); };
+function setFile(f){ picked=f; drop.querySelector("b").textContent="📄 "+f.name; $("#go").disabled=false; }
+
+$("#go").onclick=async()=>{
+  if(!picked) return;
+  const btn=$("#go"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Memproses…';
+  const fd=new FormData();
+  fd.append("file",picked);
+  fd.append("job",job);
+  fd.append("width_mm",$("#width_mm").value||"40");
+  if(job==="mopa"){
+    fd.append("auto_threshold",$("#auto_threshold").checked);
+    fd.append("threshold",$("#threshold").value||"128");
+    fd.append("invert",$("#invert").checked);
+    fd.append("filter_speckle",$("#filter_speckle").value||"4");
+  }else{
+    fd.append("dpi",$("#dpi").value||"600");
+    fd.append("gamma",$("#gamma").value||"1.0");
+    fd.append("autocontrast",$("#autocontrast").checked);
+    fd.append("clahe",$("#clahe").checked);
+    fd.append("invert",$("#invert_uv").checked);
+    fd.append("remove_bg",$("#remove_bg").checked);
+  }
+  try{
+    const res=await fetch("/process",{method:"POST",body:fd});
+    const data=await res.json();
+    render(data);
+  }catch(err){
+    $("#result").innerHTML='<div class="err">Gagal menghubungi server: '+err+'</div>';
+  }finally{
+    btn.disabled=false; btn.textContent="Proses";
+  }
+};
+
+function render(d){
+  const R=$("#result");
+  if(!d.ok){ R.innerHTML='<div class="err">Error: '+(d.error||"tidak diketahui")+'</div>'; return; }
+  let html="";
+  if(!d.passthrough){
+    html+='<div class="previews">';
+    html+='<div class="pv"><h3>Sebelum</h3><div class="imgbox">'+(d.before?'<img src="'+d.before+'">':'—')+'</div></div>';
+    html+='<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox">'+(d.after?'<img src="'+d.after+'">':'—')+'</div></div>';
+    html+='</div>';
+  }
+  html+='<div class="meta">';
+  if(d.size_mm) html+='<span class="chip">Ukuran: <b>'+d.size_mm[0]+' × '+d.size_mm[1]+' mm</b></span>';
+  if(d.n_paths!=null) html+='<span class="chip">Kontur: <b>'+d.n_paths+'</b></span>';
+  html+='<span class="chip">Mode: <b>'+(d.job==="mopa"?"Vektor / MOPA":"Grayscale / UV")+'</b></span>';
+  html+='</div>';
+  html+='<div class="dl">';
+  d.downloads.forEach((x,i)=>{ html+='<a class="'+(i>0?"sec":"")+'" href="'+x.url+'" download>⬇ '+x.label+'</a>'; });
+  html+='</div>';
+  if(d.warnings&&d.warnings.length){
+    html+='<div class="warns">';
+    d.warnings.forEach(w=>{ html+='<div class="warn">⚠ '+w+'</div>'; });
+    html+='</div>';
+  }
+  R.innerHTML=html;
+}
+</script>
+</body>
+</html>
