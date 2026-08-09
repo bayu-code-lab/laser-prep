@@ -54,9 +54,19 @@ def _preprocess_bitmap(
     elif img.ndim == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # "Foreground-ness" = jarak tiap piksel dari WARNA LATAR (bukan kecerahan).
+    # Kenapa: logo berwarna/gradien (mis. cincin oranye) kalau dipukul rata jadi
+    # grayscale, bagian terang (oranye muda/kuning) dianggap latar putih lalu
+    # pecah berantakan. Dengan mengukur beda-warna dari latar, seluruh subjek
+    # berwarna jadi siluet pekat yang bersih. Untuk logo hitam-putih hasilnya sama.
+    h, w = img.shape[:2]
+    edges = np.concatenate([
+        img[0, :, :], img[-1, :, :], img[:, 0, :], img[:, -1, :]
+    ], axis=0)
+    bg_color = np.median(edges, axis=0)                      # warna latar (BGR)
+    diff = np.abs(img.astype(np.int16) - bg_color).max(axis=2)
+    gray = (255 - diff).clip(0, 255).astype(np.uint8)        # subjek gelap, latar terang
 
-    h, w = gray.shape
     if max(h, w) < 200:
         warnings.append(
             f"Resolusi input rendah ({w}x{h}px). Vektor mungkin kasar — minta file lebih besar bila bisa."
@@ -74,18 +84,56 @@ def _preprocess_bitmap(
         used = int(threshold)
         _, bw = cv2.threshold(gray, used, 255, cv2.THRESH_BINARY)
 
-    # Deteksi apakah subjek gelap di latar terang (umum untuk logo).
+    # Auto-orientasi: vtracer men-trace piksel HITAM sebagai objek. Kalau latar
+    # (background) ikut hitam, seluruh bingkai gambar ikut ke-trace jadi kotak +
+    # berantakan. Cek piksel tepi (biasanya = background); bila mayoritas hitam,
+    # balik supaya latar selalu putih, objek hitam.
+    border = np.concatenate([bw[0, :], bw[-1, :], bw[:, 0], bw[:, -1]])
+    if border.mean() < 127:
+        bw = cv2.bitwise_not(bw)
+
+    # "Balik warna" manual = override untuk logo yang subjeknya memang terang.
     if invert:
         bw = cv2.bitwise_not(bw)
 
-    # Buang bintik kecil (speckle) dengan morphological opening.
-    if despeckle and despeckle > 0:
-        k = np.ones((despeckle, despeckle), np.uint8)
-        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, k)
-        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, k)
-
+    # ponytail: morphological open/close dihapus — dengan polaritas teks-hitam,
+    # step CLOSE mengikis coretan tipis & merusak teks kecil. Pembuangan speckle
+    # sudah ditangani vtracer (filter_speckle) berdasarkan luas, tanpa merusak teks.
     cv2.imencode(".png", bw)[1].tofile(work_png)
     return used, warnings
+
+
+def _poly_area(pts) -> float:
+    """Luas poligon (shoelace), absolut."""
+    a = 0.0
+    for i in range(len(pts)):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % len(pts)]
+        a += x0 * y1 - x1 * y0
+    return abs(a) * 0.5
+
+
+def _drop_frame_and_speckle(polylines, size_mm):
+    """Buang kontur bingkai-persegi penuh-gambar (border) dan bintik super kecil.
+
+    Bingkai: kontur tertutup yang menutupi ~seluruh kanvas DAN berbentuk persegi
+    (luasnya ~ luas bbox). Lingkaran/logo penuh-frame TIDAK ikut terbuang karena
+    luasnya cuma ~78% bbox. Speckle: bbox < 0.4mm (sisa noise lolos vtracer).
+    """
+    w_mm, h_mm = size_mm
+    out = []
+    for pts, closed in polylines:
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        bw, bh = max(xs) - min(xs), max(ys) - min(ys)
+        full = bw >= 0.97 * w_mm and bh >= 0.97 * h_mm
+        rect = _poly_area(pts) >= 0.95 * bw * bh
+        if closed and full and rect:
+            continue  # ponytail: border persegi penuh-frame, drop it
+        if closed and bw < 0.4 and bh < 0.4:
+            continue  # speckle sisa
+        out.append((pts, closed))
+    return out
 
 
 def process_raster_logo(
@@ -125,6 +173,7 @@ def process_raster_logo(
     polylines, size_mm = svg_to_polylines_mm(
         svg_path, target_width_mm=target_width_mm, points_per_mm=points_per_mm
     )
+    polylines = _drop_frame_and_speckle(polylines, size_mm)
     if not polylines:
         warnings.append("Tidak ada kontur terdeteksi. Coba matikan/hidupkan 'invert' atau ubah threshold.")
 
@@ -172,3 +221,17 @@ def process_svg_input(
         n_paths=len(polylines),
         warnings=warnings,
     )
+
+
+if __name__ == "__main__":
+    # self-check: frame + speckle drop
+    import math
+    size = (40.0, 40.0)
+    frame = ([(0, 0), (40, 0), (40, 40), (0, 40)], True)          # border -> drop
+    speck = ([(1, 1), (1.2, 1), (1.2, 1.2), (1, 1.2)], True)      # noise  -> drop
+    glyph = ([(5, 5), (15, 5), (15, 20), (5, 20)], True)          # keep
+    circle = ([(20 + 20 * math.cos(t), 20 + 20 * math.sin(t))     # full-frame circle -> KEEP
+               for t in [i / 64 * 2 * math.pi for i in range(64)]], True)
+    kept = _drop_frame_and_speckle([frame, speck, glyph, circle], size)
+    assert kept == [glyph, circle], [len(p[0]) for p in kept]
+    print("ok")

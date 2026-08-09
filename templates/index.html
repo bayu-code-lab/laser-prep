@@ -67,6 +67,7 @@
       <button data-job="mopa" class="active">Logo → Vektor<br><small>(besi / MOPA)</small></button>
       <button data-job="uv">Foto → Grayscale<br><small>(kaca / UV)</small></button>
     </div>
+    <div class="hint"><b>Logo → Vektor</b>: ubah logo/gambar jadi garis (DXF) untuk ukir besi/MOPA. <b>Foto → Grayscale</b>: ubah foto jadi abu-abu untuk kaca/UV.</div>
 
     <div class="drop" id="drop">
       <div><b>Klik / seret file ke sini</b></div>
@@ -81,14 +82,17 @@
     <!-- opsi MOPA -->
     <div class="opts" id="opts-mopa">
       <label class="check"><input type="checkbox" id="auto_threshold" checked /> Threshold otomatis (Otsu)</label>
+      <div class="hint">Alat memilih sendiri batas terang/gelap untuk memisahkan gambar dari latar. Biarkan menyala; matikan hanya kalau garis putus atau hasil terlalu tebal/tipis.</div>
       <div id="thrbox" style="display:none">
         <label>Threshold manual (0–255)</label>
         <input type="number" id="threshold" value="128" min="0" max="255" />
+        <div class="hint">Batas terang/gelap yang kamu atur sendiri. Kecil = ambil lebih banyak (lebih tebal), besar = ambil lebih sedikit (lebih tipis).</div>
       </div>
       <label class="check"><input type="checkbox" id="invert" /> Balik warna (subjek terang di latar gelap)</label>
+      <div class="hint">Biasanya <b>tidak perlu</b> — latar dideteksi otomatis. Centang hanya kalau logomu justru terang di atas latar gelap dan hasilnya kebalik.</div>
       <label>Buang bintik kecil (filter speckle)</label>
       <input type="number" id="filter_speckle" value="4" min="0" max="30" />
-      <div class="hint">Naikkan bila banyak noise/titik. Turunkan bila detail halus ikut hilang.</div>
+      <div class="hint">Menghapus titik/noda kecil yang bukan bagian logo. Naikkan bila banyak bintik; turunkan bila detail halus ikut hilang.</div>
     </div>
 
     <!-- opsi UV -->
@@ -103,10 +107,15 @@
           <input type="number" id="gamma" value="1.0" min="0.2" max="3" step="0.1" />
         </div>
       </div>
+      <div class="hint"><b>DPI</b> = kerapatan titik. 600 cukup untuk kebanyakan foto kaca; makin tinggi makin halus tapi file makin berat. <b>Gamma</b> mengatur terang-gelap bagian tengah: di bawah 1 menggelapkan, di atas 1 menerangkan.</div>
       <label class="check"><input type="checkbox" id="autocontrast" checked /> Auto-kontras (auto levels)</label>
+      <div class="hint">Melebarkan beda terang-gelap otomatis supaya foto tidak "flat". Biarkan menyala untuk kebanyakan foto.</div>
       <label class="check"><input type="checkbox" id="clahe" /> CLAHE (kontras lokal, untuk foto)</label>
+      <div class="hint">Menaikkan kontras per-bagian, memunculkan detail pada foto rumit (wajah, bayangan). Nyalakan sebagai ganti auto-kontras bila detail kurang keluar.</div>
       <label class="check"><input type="checkbox" id="invert_uv" /> Balik (negatif)</label>
+      <div class="hint">Menukar terang jadi gelap (seperti klise foto). Dipakai bila material terukir jadi terang di atas dasar gelap.</div>
       <label class="check"><input type="checkbox" id="remove_bg" /> Hapus background (perlu rembg)</label>
+      <div class="hint">Opsional — memisahkan subjek dari latar otomatis. Perlu paket <b>rembg</b> terpasang; kalau belum, opsi ini dilewati saja (aman diabaikan).</div>
       <div class="hint">Dithering/halftone tidak dilakukan di sini — atur di EZCAD2 saat import bitmap.</div>
     </div>
 
@@ -145,7 +154,21 @@ drop.onclick=()=>fileInput.click();
 ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hover");}));
 drop.addEventListener("drop",e=>{ if(e.dataTransfer.files.length){ setFile(e.dataTransfer.files[0]); }});
 fileInput.onchange=e=>{ if(e.target.files.length) setFile(e.target.files[0]); };
-function setFile(f){ picked=f; drop.querySelector("b").textContent="📄 "+f.name; $("#go").disabled=false; }
+function setFile(f){
+  picked=f; drop.querySelector("b").textContent="📄 "+f.name; $("#go").disabled=false;
+  // Preview instan file yang diupload (sebelum tekan Proses).
+  const can = /\.(png|jpe?g|bmp|tif?f|webp|svg)$/i.test(f.name);
+  const src = can ? URL.createObjectURL(f) : "";
+  $("#result").innerHTML =
+    '<div class="previews">'
+    + '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
+      + (src ? '<img src="'+src+'">' : '<span class="empty">'+f.name+'</span>')
+      + '</div></div>'
+    + '<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox">'
+      + '<span class="empty">Tekan <b>Proses</b> untuk melihat hasil</span>'
+      + '</div></div>'
+    + '</div>';
+}
 
 $("#go").onclick=async()=>{
   if(!picked) return;

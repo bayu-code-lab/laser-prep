@@ -4,6 +4,7 @@ Semua koordinat internal memakai satuan milimeter (mm), sumbu Y ke ATAS (seperti
 """
 from __future__ import annotations
 import math
+import re
 from typing import List, Tuple
 
 import ezdxf
@@ -13,6 +14,23 @@ from svgpathtools import svg2paths2
 
 Point = Tuple[float, float]
 Polyline = Tuple[List[Point], bool]  # (titik-titik, apakah tertutup)
+
+_TRANSLATE = re.compile(r"translate\(\s*([-\d.eE]+)[ ,]+([-\d.eE]+)\s*\)")
+
+
+def _apply_transform(paths, attrs):
+    """vtracer menaruh tiap path pada transform=\"translate(x,y)\" yang TIDAK
+    dibaca svg2paths2. Terapkan translate-nya supaya tiap kontur di posisi benar.
+    (vtracer hanya memakai translate; scale/matrix diabaikan — beri warning bila ada.)
+    """
+    out = []
+    for p, a in zip(paths, attrs):
+        t = (a or {}).get("transform", "")
+        m = _TRANSLATE.search(t)
+        if m:
+            p = p.translated(complex(float(m.group(1)), float(m.group(2))))
+        out.append(p)
+    return out
 
 
 def svg_to_polylines_mm(
@@ -27,6 +45,7 @@ def svg_to_polylines_mm(
     Sumbu Y dibalik supaya orientasi benar di DXF/EZCAD2.
     """
     paths, _attrs, _svg_attr = svg2paths2(svg_path)
+    paths = _apply_transform(paths, _attrs)
 
     # Bounding box global dalam satuan user SVG.
     xmin = ymin = math.inf

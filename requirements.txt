@@ -8,6 +8,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 
-# OPSIONAL — hapus background otomatis (unduhan model ~180 MB saat pertama jalan):
-# rembg>=2.0
-# onnxruntime>=1.17
+# Hapus background di UV kini pakai flood-fill warna (built-in, tanpa model).
+# rembg tak lagi diperlukan.

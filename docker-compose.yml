@@ -1,0 +1,10 @@
+services:
+  laser-prep:
+    build: .
+    container_name: laser-prep
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app  # mount source -> perubahan langsung terlihat (hot reload)
+    # --reload: uvicorn watch app.py & prep/, restart otomatis tiap file berubah.
+    command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload

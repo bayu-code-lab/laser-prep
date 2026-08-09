@@ -25,15 +25,28 @@ class RasterResult:
     warnings: List[str] = field(default_factory=list)
 
 
-def _try_remove_bg(bgr: np.ndarray) -> Tuple[np.ndarray, bool, str]:
-    """Coba hapus background pakai rembg bila terpasang. Return (rgba/bgr, berhasil, pesan)."""
-    try:
-        from rembg import remove  # opsional, berat
-    except Exception:
-        return bgr, False, "rembg belum terpasang — lewati hapus background (lihat README)."
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    out = remove(Image.fromarray(rgb))  # RGBA
-    return np.array(out), True, "Background dihapus (rembg)."
+def _remove_bg_color(bgr: np.ndarray, tol: int = 20) -> Tuple[np.ndarray, bool, str]:
+    """Hapus background SERAGAM lewat flood-fill dari 4 sudut, jadikan putih.
+
+    Beda dari rembg (segmentasi objek utama, sering ikut menghapus TEKS): cara ini
+    cuma membuang area latar yang warnanya seragam & nyambung dari tepi. Semua yang
+    tergambar — termasuk teks kecil — tetap aman. Gratis, offline, tanpa model.
+    Cocok untuk logo/grafis berlatar polos; untuk foto berlatar ramai hasilnya minim.
+    """
+    h, w = bgr.shape[:2]
+    mask = np.zeros((h + 2, w + 2), np.uint8)
+    work = bgr.copy()
+    for sx, sy in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]:
+        cv2.floodFill(
+            work, mask, (sx, sy), (255, 255, 255),
+            (tol, tol, tol), (tol, tol, tol), cv2.FLOODFILL_FIXED_RANGE,
+        )
+    filled = mask[1:h + 1, 1:w + 1].astype(bool)
+    out = bgr.copy()
+    out[filled] = (255, 255, 255)
+    if not filled.any():
+        return bgr, False, "Latar tidak seragam — tak ada yang dihapus (foto berlatar ramai)."
+    return out, True, "Background dihapus (latar seragam) — teks tetap aman."
 
 
 def process_photo(
@@ -70,14 +83,8 @@ def process_photo(
     cv2.imencode(".png", img)[1].tofile(prev_before)
 
     if remove_bg:
-        rgba, ok, msg = _try_remove_bg(img)
+        img, ok, msg = _remove_bg_color(img)  # sudah berlatar putih
         warnings.append(msg)
-        if ok:
-            # komposit di atas putih agar area kosong = putih (tak terukir)
-            a = rgba[:, :, 3:4].astype(np.float32) / 255.0
-            rgb = rgba[:, :, :3].astype(np.float32)
-            white = np.ones_like(rgb) * 255.0
-            img = (rgb * a + white * (1 - a)).astype(np.uint8)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -95,6 +102,13 @@ def process_photo(
         table = ((np.arange(256) / 255.0) ** inv * 255).astype(np.uint8)
         gray = cv2.LUT(gray, table)
 
+    # Logo/grafis berlatar putih: buang abu-abu SANGAT tipis (bayangan/haze JPEG)
+    # jadi putih murni — kalau tidak, ia ikut terukir & tampak "garis rusak".
+    # Foto (nada kontinu, sedikit piksel putih) dilewati agar highlight tak jebol.
+    if (gray >= 250).mean() > 0.35:
+        gray[gray >= 210] = 255
+        warnings.append("Latar & bayangan tipis dibersihkan jadi putih (grafis berlatar putih).")
+
     if invert:
         gray = cv2.bitwise_not(gray)
 
@@ -105,8 +119,17 @@ def process_photo(
     target_h_px = max(1, int(round(h * scale)))
     target_h_mm = target_width_mm * (h / w)
 
-    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+    # INTER_LINEAR saat memperbesar: INTER_CUBIC "overshoot" di tepi kontras tinggi,
+    # bikin garis putus-putus/pecah di sekeliling bentuk. Linear halus, tanpa ringing.
+    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
     out = cv2.resize(gray, (target_w_px, target_h_px), interpolation=interp)
+
+    if scale > 1.05:
+        warnings.append(
+            f"Sumber {w}px diperbesar ke {target_w_px}px — detail tidak bertambah, "
+            f"tepi bisa terlihat kasar. Untuk hasil tajam pakai gambar lebih besar "
+            f"atau turunkan DPI (mis. {int(dpi * w / target_w_px)})."
+        )
 
     if max(target_w_px, target_h_px) > 12000:
         warnings.append("Ukuran piksel sangat besar — pertimbangkan turunkan DPI agar file tak berat di EZCAD2.")
