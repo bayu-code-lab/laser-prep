@@ -13,8 +13,10 @@ import re
 import shutil
 import uuid
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+import time
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Cookie
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from prep import (
@@ -27,10 +29,9 @@ from prep import (
 )
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE, "_uploads")
 OUT_DIR = os.path.join(BASE, "_out")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUT_DIR, exist_ok=True)
+SESSION_TTL = 3600  # detik; folder sesi yatim dihapus setelah ini
 
 app = FastAPI(title="Laser Prep")
 app.mount("/out", StaticFiles(directory=OUT_DIR), name="out")
@@ -42,14 +43,36 @@ def _safe_stem(name: str) -> str:
     return f"{stem}_{uuid.uuid4().hex[:6]}"
 
 
+def _gc_sessions() -> None:
+    """Hapus folder sesi yatim (tab ditutup / server restart)."""
+    now = time.time()
+    for name in os.listdir(OUT_DIR):
+        d = os.path.join(OUT_DIR, name)
+        if os.path.isdir(d) and now - os.path.getmtime(d) > SESSION_TTL:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def _fresh_session_dir(sid: str) -> str:
+    """Folder khusus sesi ini, dikosongkan tiap upload baru."""
+    d = os.path.join(OUT_DIR, sid)
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 @app.get("/", response_class=HTMLResponse)
-def index() -> str:
+def index() -> HTMLResponse:
     with open(os.path.join(BASE, "templates", "index.html"), encoding="utf-8") as f:
-        return f.read()
+        resp = HTMLResponse(f.read())
+    # sid baru tiap page load -> refresh = sesi baru, hasil lama jadi yatim & di-GC
+    resp.set_cookie("lp_sid", uuid.uuid4().hex, httponly=True, samesite="lax")
+    _gc_sessions()
+    return resp
 
 
 @app.post("/process")
 async def process(
+    lp_sid: str = Cookie(default=""),
     file: UploadFile = File(...),
     job: str = Form(...),                 # "mopa" | "uv"
     width_mm: float = Form(50.0),
@@ -65,10 +88,13 @@ async def process(
     clahe: bool = Form(False),
     gamma: float = Form(1.0),
 ):
+    sid = re.sub(r"[^a-f0-9]", "", lp_sid)[:32] or uuid.uuid4().hex
+    sess_dir = _fresh_session_dir(sid)
+
     ext = os.path.splitext(file.filename or "")[1].lower()
     stem = _safe_stem(file.filename or "file")
-    # Simpan sumber di OUT_DIR agar preview "sebelum" bisa dilayani lewat /out.
-    src_path = os.path.join(OUT_DIR, f"{stem}{ext}")
+    # Simpan sumber di sess_dir agar preview "sebelum" bisa dilayani lewat /out.
+    src_path = os.path.join(sess_dir, f"{stem}{ext}")
     with open(src_path, "wb") as out:
         shutil.copyfileobj(file.file, out)
 
@@ -78,15 +104,15 @@ async def process(
         width_mm = 50.0
 
     def url(p: str) -> str:
-        return "/out/" + os.path.basename(p)
+        return f"/out/{sid}/" + os.path.basename(p)
 
     try:
         if job == "mopa":
             if ext in VECTOR_EXT:
-                r = process_svg_input(src_path, OUT_DIR, stem, target_width_mm=width_mm)
+                r = process_svg_input(src_path, sess_dir, stem, target_width_mm=width_mm)
             elif ext in RASTER_EXT:
                 r = process_raster_logo(
-                    src_path, OUT_DIR, stem,
+                    src_path, sess_dir, stem,
                     target_width_mm=width_mm,
                     auto_threshold=auto_threshold,
                     threshold=int(threshold),
@@ -94,7 +120,7 @@ async def process(
                     filter_speckle=int(filter_speckle),
                 )
             elif ext in PASSTHROUGH_EXT:
-                dest = os.path.join(OUT_DIR, f"{stem}{ext}")
+                dest = os.path.join(sess_dir, f"{stem}_copy{ext}")
                 shutil.copyfile(src_path, dest)
                 return JSONResponse({
                     "ok": True, "job": job, "passthrough": True,
@@ -126,7 +152,7 @@ async def process(
             if ext not in RASTER_EXT:
                 raise HTTPException(400, f"Cabang Kaca UV butuh gambar raster (JPG/PNG/...). Dapat: {ext}")
             r = process_photo(
-                src_path, OUT_DIR, stem,
+                src_path, sess_dir, stem,
                 target_width_mm=width_mm, dpi=int(dpi),
                 remove_bg=remove_bg, autocontrast=autocontrast,
                 clahe=clahe, gamma=float(gamma),
@@ -150,14 +176,6 @@ async def process(
         raise
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-
-@app.get("/download/{name}")
-def download(name: str):
-    path = os.path.join(OUT_DIR, os.path.basename(name))
-    if not os.path.exists(path):
-        raise HTTPException(404, "File tidak ditemukan.")
-    return FileResponse(path, filename=os.path.basename(name))
 
 
 if __name__ == "__main__":
