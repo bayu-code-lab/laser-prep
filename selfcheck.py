@@ -72,9 +72,23 @@ def check_invert_grayscale() -> None:
     assert means[True] > 200, f"dengan invert seharusnya terang: {means}"
 
 
+def check_preview_thumb() -> None:
+    """bug #2: preview harus thumbnail; berkas download tetap resolusi penuh."""
+    arr = np.full((1200, 1200), 128, np.uint8)
+    arr[0:400, :] = 20
+    d = _call(file=_upload("t.png", _png_bytes(arr)), width_mm=200.0, dpi=600)
+    assert d["ok"], d
+    for key in ("before", "after"):
+        size = Image.open(_out_path(d[key])).size
+        assert max(size) <= 900, f"preview '{key}' terlalu besar: {size}"
+    full = Image.open(_out_path(d["downloads"][0]["url"])).size
+    assert full[0] == 4724, f"berkas download harus resolusi penuh: {full}"
+
+
 if __name__ == "__main__":
     try:
         check_invert_grayscale()
+        check_preview_thumb()
     finally:
         _cleanup()
     print("selfcheck ok")
