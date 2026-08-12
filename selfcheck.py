@@ -85,10 +85,23 @@ def check_preview_thumb() -> None:
     assert full[0] == 4724, f"berkas download harus resolusi penuh: {full}"
 
 
+def check_svg_preview_before() -> None:
+    """bug #6: untuk input SVG, panel 'sebelum' harus menunjuk SVG sumber, bukan hasil render."""
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+           '<path d="M1,1 L9,1 L9,9 L1,9 Z"/></svg>')
+    d = _call(file=_upload("s.svg", io.BytesIO(svg.encode())), job="mopa", width_mm=30.0)
+    assert d["ok"], d
+    assert ".svg" in d["before"], f"'sebelum' harus berkas SVG sumber: {d['before']}"
+    # bandingkan path di disk, bukan URL: keduanya dapat cache-buster '?v=' yang berbeda
+    # sehingga string URL-nya selalu tampak beda meski menunjuk berkas yang sama.
+    assert _out_path(d["before"]) != _out_path(d["after"]), d
+
+
 if __name__ == "__main__":
     try:
         check_invert_grayscale()
         check_preview_thumb()
+        check_svg_preview_before()
     finally:
         _cleanup()
     print("selfcheck ok")
