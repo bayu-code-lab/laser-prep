@@ -157,7 +157,7 @@ async def process(
                 src_path, sess_dir, stem,
                 target_width_mm=width_mm, dpi=int(dpi),
                 remove_bg=remove_bg, autocontrast=autocontrast,
-                clahe=clahe, gamma=float(gamma),
+                clahe=clahe, gamma=float(gamma), invert=invert,
             )
             os.remove(src_path)  # sumber tak dipakai lagi; preview 'before' sudah punya thumbnail sendiri
 
