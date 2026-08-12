@@ -1,5 +1,5 @@
 """
-Cabang RASTER (Kaca UV): foto/gambar -> PNG grayscale bersih dengan ukuran fisik benar.
+Mode KE GRAYSCALE (PNG): foto/gambar -> PNG grayscale bersih dengan ukuran fisik benar.
 
 Python menyiapkan: grayscale, kontras, crop/auto-trim, penskalaan ke mm @ DPI.
 DITHERING/HALFTONE sengaja TIDAK dilakukan di sini — biar EZCAD2 yang urus (lebih unggul).
@@ -74,7 +74,7 @@ def process_photo(
     gamma: float = 1.0,
 ) -> RasterResult:
     os.makedirs(out_dir, exist_ok=True)
-    png_path = os.path.join(out_dir, f"{stem}_uv.png")
+    png_path = os.path.join(out_dir, f"{stem}_grayscale.png")
     prev_before = os.path.join(out_dir, f"{stem}_before.jpg")
     prev_after = os.path.join(out_dir, f"{stem}_after.jpg")
     warnings: List[str] = []

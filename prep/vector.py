@@ -1,5 +1,5 @@
 """
-Cabang VEKTOR (MOPA): logo raster (JPG/PNG) -> vektor bersih -> DXF + SVG + preview.
+Mode KE VEKTOR (DXF): logo raster (JPG/PNG) -> vektor bersih -> DXF + SVG + preview.
 Juga menerima input SVG (langsung diratakan & diskalakan).
 
 Python HANYA menyiapkan geometri bersih & skala mm yang benar.

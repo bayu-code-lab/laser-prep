@@ -2,8 +2,8 @@
 Laser Prep — web app LOKAL untuk menyiapkan file pelanggan jadi import-ready EZCAD2.
 
 Jalankan:  python app.py    lalu buka http://127.0.0.1:8000
-- Cabang "Logo → Vektor (MOPA)": JPG/PNG/SVG -> DXF + SVG bersih, skala mm benar.
-- Cabang "Foto → Grayscale (Kaca UV)": foto -> PNG grayscale bersih, ukuran fisik benar.
+- Mode "Ke Vektor (DXF)": JPG/PNG/SVG -> DXF + SVG bersih, skala mm benar.
+- Mode "Ke Grayscale (PNG)": foto -> PNG grayscale bersih, ukuran fisik benar.
 
 Parameter laser & dithering tetap kamu atur di EZCAD2.
 """
@@ -76,7 +76,7 @@ def index() -> HTMLResponse:
 async def process(
     lp_sid: str = Cookie(default=""),
     file: UploadFile = File(...),
-    job: str = Form(...),                 # "mopa" | "uv"
+    job: str = Form(...),                 # "vector" | "grayscale"
     width_mm: float = Form(50.0),
     # vektor
     auto_threshold: bool = Form(True),
@@ -110,7 +110,7 @@ async def process(
         return f"/out/{sid}/" + os.path.basename(p)
 
     try:
-        if job == "mopa":
+        if job == "vector":
             if ext in VECTOR_EXT:
                 r = process_svg_input(src_path, sess_dir, stem, target_width_mm=width_mm)
             elif ext in RASTER_EXT:
@@ -132,7 +132,7 @@ async def process(
                     "warnings": [f"File {ext} sudah vektor/siap import — disalin apa adanya. Set ukuran & parameter di EZCAD2."],
                 })
             else:
-                raise HTTPException(400, f"Format {ext} tak didukung untuk cabang MOPA.")
+                raise HTTPException(400, f"Format {ext} tak didukung untuk mode Vektor.")
 
             def bust(p):  # cache-buster utk preview
                 return url(p) + "?v=" + uuid.uuid4().hex[:6]
@@ -150,9 +150,9 @@ async def process(
                 "warnings": r.warnings,
             })
 
-        elif job == "uv":
+        elif job == "grayscale":
             if ext not in RASTER_EXT:
-                raise HTTPException(400, f"Cabang Kaca UV butuh gambar raster (JPG/PNG/...). Dapat: {ext}")
+                raise HTTPException(400, f"Mode Grayscale butuh gambar raster (JPG/PNG/TIFF). Dapat: {ext}")
             r = process_photo(
                 src_path, sess_dir, stem,
                 target_width_mm=width_mm, dpi=int(dpi),

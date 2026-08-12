@@ -35,7 +35,7 @@ def _upload(name: str, buf: io.BytesIO) -> UploadFile:
 def _call(**kwargs) -> dict:
     """Panggil endpoint process() dengan default lengkap; kwargs menimpa yang perlu."""
     args = dict(
-        lp_sid=SID, job="uv", width_mm=20.0,
+        lp_sid=SID, job="grayscale", width_mm=20.0,
         auto_threshold=True, threshold=128, invert=False, filter_speckle=4,
         dpi=100, remove_bg=False, autocontrast=True, clahe=False, gamma=1.0,
     )
@@ -89,7 +89,7 @@ def check_svg_preview_before() -> None:
     """bug #6: untuk input SVG, panel 'sebelum' harus menunjuk SVG sumber, bukan hasil render."""
     svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
            '<path d="M1,1 L9,1 L9,9 L1,9 Z"/></svg>')
-    d = _call(file=_upload("s.svg", io.BytesIO(svg.encode())), job="mopa", width_mm=30.0)
+    d = _call(file=_upload("s.svg", io.BytesIO(svg.encode())), job="vector", width_mm=30.0)
     assert d["ok"], d
     assert ".svg" in d["before"], f"'sebelum' harus berkas SVG sumber: {d['before']}"
     # bandingkan path di disk, bukan URL: keduanya dapat cache-buster '?v=' yang berbeda
