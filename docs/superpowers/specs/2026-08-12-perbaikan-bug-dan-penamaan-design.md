@@ -11,7 +11,8 @@ Satu pass perbaikan pada Laser Prep. Dua bagian:
   `Ke Grayscale (PNG)`), bukan berdasarkan jenis mesin (MOPA/UV).
 - **B. Enam perbaikan bug & dokumentasi** yang sudah terverifikasi ada di kode saat ini.
 
-Tanpa file baru, tanpa dependensi baru, tanpa fitur baru.
+Tanpa dependensi baru dan tanpa fitur baru. Satu berkas baru: `selfcheck.py` (lihat
+bagian Verifikasi).
 
 ## Masalah
 
@@ -124,21 +125,37 @@ langsung oleh browser di `<img>`, jadi tidak perlu render tambahan.
 
 ## Verifikasi
 
-Tambah self-check `__main__` di `prep/raster.py`, mengikuti pola yang sudah ada di
-`prep/vector.py:227-238` (assert polos, tanpa framework):
+Bug #1 hidup di **wiring `app.py`**, bukan di `prep/`. `process_photo` sendiri sudah menghormati
+`invert` hari ini, sehingga self-check di level `prep/raster.py` akan lulus meski bug-nya ada —
+cek yang tidak bisa gagal bukan cek. Karena itu verifikasi harus menembus endpoint.
 
-- Buat gambar sintetis terang di memori, tulis ke folder sementara.
-- Jalankan `process_photo(..., invert=True)`.
-- Baca PNG hasil, `assert` nilai rata-rata piksel menjadi gelap.
+Buat berkas baru `selfcheck.py` di akar project: memanggil fungsi `app.process()` **langsung**
+lewat `asyncio.run` dengan `UploadFile` dari `BytesIO`. Tanpa server, tanpa `httpx`, tanpa
+pytest — **nol dependensi baru**, mengikuti gaya assert polos `prep/vector.py:227-238`. Cek yang
+sama sekaligus membuktikan penggantian nilai `job` di Bagian A tidak merusak wiring.
 
-Ini adalah cek yang gagal duluan bila bug #1 kembali muncul.
+Isi self-check:
+
+1. **Invert grayscale** (bug #1) — proses gambar sintetis dua kali, `invert=False` lalu `True`;
+   `assert` rata-rata piksel PNG hasil berbalik dari gelap ke terang.
+2. **Ukuran preview** (bug #2) — `assert` sisi terpanjang berkas `before` dan `after` ≤ 900 px,
+   sementara PNG di tautan download tetap resolusi penuh.
+3. **Preview sebelum untuk SVG** (bug #6) — `assert` `before` menunjuk ke berkas `.svg` sumber
+   dan berbeda dari `after`.
 
 Self-check `prep/vector.py` yang sudah ada harus tetap lulus setelah parameter `despeckle`
-dihapus.
+dihapus (membuktikan tidak ada `TypeError` dari pemanggil).
+
+Perintah (cv2 tidak terpasang di host; project ini berjalan di Docker):
+
+```bash
+docker compose run --rm --no-deps laser-prep python selfcheck.py
+docker compose run --rm --no-deps laser-prep python -m prep.vector
+```
 
 Verifikasi manual setelah implementasi:
 
-- `grep -rwiE "mopa|uv|rembg|despeckle" app.py prep/ templates/ README.md requirements.txt`
+- `grep -rwiE "mopa|uv|rembg|despeckle" app.py selfcheck.py prep/ templates/ README.md requirements.txt`
   tidak menghasilkan apa pun kecuali komentar pembanding rembg di `prep/raster.py:31` yang
   memang dipertahankan. (`-w` menjaga `uvicorn` tidak ikut terjaring.)
 - Kedua cabang diproses lewat UI memakai berkas di `samples/`, preview sebelum dan sesudah
