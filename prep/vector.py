@@ -169,6 +169,7 @@ def process_raster_logo(
         corner_threshold=int(corner_threshold),
         path_precision=3,
     )
+    os.remove(work_png)  # bitmap antara, tak dipakai lagi setelah jadi SVG
 
     polylines, size_mm = svg_to_polylines_mm(
         svg_path, target_width_mm=target_width_mm, points_per_mm=points_per_mm

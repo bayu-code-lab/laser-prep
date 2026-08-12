@@ -1,6 +1,5 @@
 .git
 _out
-_uploads
 .vscode
 .github
 __pycache__

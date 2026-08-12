@@ -31,7 +31,9 @@ from prep import (
 BASE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(BASE, "_out")
 os.makedirs(OUT_DIR, exist_ok=True)
-SESSION_TTL = 3600  # detik; folder sesi yatim dihapus setelah ini
+# Detik sejak upload terakhir sebelum folder sesi dihapus. Mtime hanya diperbarui saat
+# upload, bukan saat preview/download — jadi ini juga batas "berapa lama tab boleh nganggur".
+SESSION_TTL = 1800
 
 app = FastAPI(title="Laser Prep")
 app.mount("/out", StaticFiles(directory=OUT_DIR), name="out")
@@ -90,6 +92,7 @@ async def process(
 ):
     sid = re.sub(r"[^a-f0-9]", "", lp_sid)[:32] or uuid.uuid4().hex
     sess_dir = _fresh_session_dir(sid)
+    _gc_sessions()
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     stem = _safe_stem(file.filename or "file")
@@ -120,11 +123,10 @@ async def process(
                     filter_speckle=int(filter_speckle),
                 )
             elif ext in PASSTHROUGH_EXT:
-                dest = os.path.join(sess_dir, f"{stem}_copy{ext}")
-                shutil.copyfile(src_path, dest)
+                # file sudah siap import — sajikan yang diunggah, tak perlu salinan kedua
                 return JSONResponse({
                     "ok": True, "job": job, "passthrough": True,
-                    "downloads": [{"label": ext.upper().lstrip("."), "url": url(dest)}],
+                    "downloads": [{"label": ext.upper().lstrip("."), "url": url(src_path)}],
                     "before": None, "after": None,
                     "size_mm": None, "n_paths": None,
                     "warnings": [f"File {ext} sudah vektor/siap import — disalin apa adanya. Set ukuran & parameter di EZCAD2."],
@@ -157,6 +159,7 @@ async def process(
                 remove_bg=remove_bg, autocontrast=autocontrast,
                 clahe=clahe, gamma=float(gamma),
             )
+            os.remove(src_path)  # sumber tak dipakai lagi; preview 'before' sudah punya thumbnail sendiri
 
             def bust(p):
                 return url(p) + "?v=" + uuid.uuid4().hex[:6]

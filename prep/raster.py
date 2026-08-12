@@ -63,8 +63,7 @@ def process_photo(
 ) -> RasterResult:
     os.makedirs(out_dir, exist_ok=True)
     png_path = os.path.join(out_dir, f"{stem}_uv.png")
-    prev_before = os.path.join(out_dir, f"{stem}_before.png")
-    prev_after = os.path.join(out_dir, f"{stem}_after.png")
+    prev_before = os.path.join(out_dir, f"{stem}_before.jpg")
     warnings: List[str] = []
 
     img = cv2.imdecode(np.fromfile(src_path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
@@ -79,8 +78,11 @@ def process_photo(
     elif img.ndim == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-    # simpan preview 'before'
-    cv2.imencode(".png", img)[1].tofile(prev_before)
+    # preview 'before' cukup thumbnail JPEG — versi full-res cuma bikin sesi berat
+    h, w = img.shape[:2]
+    s = min(1.0, 900 / max(h, w))
+    thumb = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA) if s < 1.0 else img
+    cv2.imencode(".jpg", thumb, [int(cv2.IMWRITE_JPEG_QUALITY), 80])[1].tofile(prev_before)
 
     if remove_bg:
         img, ok, msg = _remove_bg_color(img)  # sudah berlatar putih
@@ -135,13 +137,11 @@ def process_photo(
         warnings.append("Ukuran piksel sangat besar — pertimbangkan turunkan DPI agar file tak berat di EZCAD2.")
 
     # Simpan PNG grayscale dengan metadata DPI.
-    pil = Image.fromarray(out, mode="L")
-    pil.save(png_path, dpi=(dpi, dpi))
-    pil.save(prev_after)  # preview after = hasil grayscale
+    Image.fromarray(out, mode="L").save(png_path, dpi=(dpi, dpi))
 
     return RasterResult(
         png_path=png_path,
-        preview_after=prev_after,
+        preview_after=png_path,  # hasilnya PNG grayscale itu sendiri — tak perlu salinan kedua
         preview_before=prev_before,
         size_mm=(target_width_mm, target_h_mm),
         px=(target_w_px, target_h_px),
