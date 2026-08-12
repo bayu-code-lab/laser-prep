@@ -1,7 +1,7 @@
 """
 Mode KE GRAYSCALE (PNG): foto/gambar -> PNG grayscale bersih dengan ukuran fisik benar.
 
-Python menyiapkan: grayscale, kontras, crop/auto-trim, penskalaan ke mm @ DPI.
+Python menyiapkan: grayscale, kontras, penskalaan ke mm @ DPI.
 DITHERING/HALFTONE sengaja TIDAK dilakukan di sini — biar EZCAD2 yang urus (lebih unggul).
 """
 from __future__ import annotations

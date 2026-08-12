@@ -25,12 +25,12 @@ Alat ini menghasilkan file **import-ready**, BUKAN **mark-ready**. Artinya:
 
 ---
 
-## Dua cabang
+## Dua mode
 
-| Cabang | Untuk | Input | Output | Yang dikerjakan Python |
+| Mode | Untuk | Input | Output | Yang dikerjakan Python |
 |---|---|---|---|---|
-| **Logo → Vektor** | Besi / **MOPA** | JPG, PNG, SVG, (DXF/PLT passthrough) | **DXF** (mm) + SVG | Bersihkan bitmap, vektorisasi (vtracer), buang speckle, skala mm presisi |
-| **Foto → Grayscale** | Kaca / **UV** | JPG, PNG, TIFF | **PNG grayscale** (DPI benar) | Grayscale, auto-kontras/CLAHE, gamma, crop, skala fisik mm @ DPI |
+| **Ke Vektor (DXF)** | Ukiran garis / kontur | JPG, PNG, SVG, (DXF/PLT passthrough) | **DXF** (mm) + SVG | Bersihkan bitmap, vektorisasi (vtracer), buang speckle, skala mm presisi |
+| **Ke Grayscale (PNG)** | Ukiran bernada abu-abu | JPG, PNG, TIFF | **PNG grayscale** (DPI benar) | Grayscale, auto-kontras/CLAHE, gamma, skala fisik mm @ DPI |
 
 ---
 
@@ -44,9 +44,6 @@ Alat ini menghasilkan file **import-ready**, BUKAN **mark-ready**. Artinya:
    venv\Scripts\activate
    pip install -r requirements.txt
    ```
-
-3. (Opsional) untuk fitur **hapus background** otomatis, buka `requirements.txt`,
-   hapus tanda `#` pada baris `rembg` dan `onnxruntime`, lalu `pip install -r requirements.txt` lagi.
 
 ## Menjalankan
 
@@ -63,28 +60,28 @@ Buka browser ke **http://127.0.0.1:8000** . Selesai — semua jalan lokal, tanpa
 
 ## Cara pakai
 
-1. Pilih **jenis pekerjaan** (Logo→Vektor untuk MOPA, atau Foto→Grayscale untuk kaca UV).
+1. Pilih **mode** (Ke Vektor (DXF), atau Ke Grayscale (PNG)).
 2. **Seret file** pelanggan ke kotak upload.
 3. Isi **Lebar target (mm)** — ukuran fisik hasil ukiran (tinggi mengikuti rasio otomatis).
 4. Atur opsi bila perlu (threshold, invert, speckle / DPI, kontras, gamma).
 5. Tekan **Proses**, cek **preview sesudah**. Kurang pas? Ubah opsi, proses lagi.
-6. **Download** hasilnya (DXF untuk MOPA, PNG untuk UV).
+6. **Download** hasilnya (DXF untuk mode Vektor, PNG untuk mode Grayscale).
 
 ### Import ke EZCAD2
 
-**MOPA (DXF):**
+**Import DXF:**
 1. EZCAD2 → **File ▸ Import** → pilih file `.dxf`.
 2. Ukuran sudah dalam **mm** dan benar; cek di panel posisi/ukuran.
 3. Pilih objek → terapkan **Hatch** (isi) sesuai kebutuhan (garis isi untuk marking penuh).
-4. Set **pen parameter** (power/speed/frequency) sesuai material (mis. stainless MOPA) — pakai
+4. Set **pen parameter** (power/speed/frequency) sesuai material (mis. stainless) — pakai
    pustaka pen yang sudah kamu simpan biar cepat.
 5. Mark.
 
-**Kaca UV (PNG):**
+**Import PNG grayscale:**
 1. EZCAD2 → import **bitmap** (PNG grayscale dari alat ini).
 2. Set ukuran (mm). Di properti bitmap, aktifkan **grayscale / dithering** bawaan EZCAD2
    sesuai selera (di sinilah EZCAD2 unggul).
-3. Set pen parameter untuk UV di kaca. Mark.
+3. Set pen parameter sesuai material kaca. Mark.
 
 ---
 
@@ -114,11 +111,12 @@ laser-prep/
 ├── app.py                 # web app lokal (FastAPI)
 ├── requirements.txt
 ├── README.md
+├── selfcheck.py           # cek end-to-end: docker compose run --rm --no-deps laser-prep python selfcheck.py
 ├── prep/
 │   ├── __init__.py        # routing ekstensi + ekspor fungsi
 │   ├── geometry.py        # SVG→polyline(mm), tulis DXF, render preview
-│   ├── vector.py          # cabang MOPA: raster/SVG → DXF + SVG
-│   └── raster.py          # cabang UV: foto → PNG grayscale (skala mm @ DPI)
+│   ├── vector.py          # mode Ke Vektor: raster/SVG → DXF + SVG
+│   └── raster.py          # mode Ke Grayscale: foto → PNG grayscale (skala mm @ DPI)
 ├── templates/index.html   # UI drag-drop + preview
 ├── samples/               # contoh untuk uji coba
 └── _out/                  # hasil (dibuat otomatis)
