@@ -80,6 +80,7 @@ async def process(
     width_mm: float = Form(50.0),
     height_mm: float = Form(0.0),          # 0 = tanpa batas tinggi
     mirror: bool = Form(False),
+    rotate: int = Form(0),                # 0 | 90 | 180 | 270
     # vektor
     auto_threshold: bool = Form(True),
     threshold: int = Form(128),
@@ -114,6 +115,13 @@ async def process(
     except Exception:
         height_mm = 0.0
     target_h = height_mm if height_mm > 0 else None
+
+    try:
+        rotate = int(rotate) % 360
+    except Exception:
+        rotate = 0
+    if rotate not in (90, 180, 270):
+        rotate = 0
 
     def url(p: str) -> str:
         return f"/out/{sid}/" + os.path.basename(p)
@@ -174,6 +182,7 @@ async def process(
                 remove_bg=remove_bg, autocontrast=autocontrast, autotrim=autotrim,
                 clahe=clahe, gamma=float(gamma), invert=invert,
                 mirror=mirror,
+                rotate=rotate,
             )
             os.remove(src_path)  # sumber tak dipakai lagi; preview 'before' sudah punya thumbnail sendiri
 

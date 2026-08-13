@@ -40,7 +40,7 @@ def _call(**kwargs) -> dict:
         lp_sid=SID, job="grayscale", width_mm=20.0, height_mm=0.0,
         auto_threshold=True, threshold=128, invert=False, filter_speckle=4,
         dpi=100, remove_bg=False, autocontrast=True, clahe=False, gamma=1.0,
-        mirror=False, autotrim=True,
+        mirror=False, autotrim=True, rotate=0,
     )
     args.update(kwargs)
     return json.loads(asyncio.run(appmod.process(**args)).body)
@@ -204,6 +204,63 @@ def check_autotrim() -> None:
     assert hasil[False] > 150, f"tanpa trim: kanvas putih ikut, rata-rata {hasil[False]:.1f}"
 
 
+def check_rotate_grayscale() -> None:
+    """Putar 90/180/270 harus SEARAH JARUM JAM, dibandingkan piksel-demi-piksel."""
+    # Sumber PERSEGI dengan sengaja: penskalaan menargetkan LEBAR, jadi sumber
+    # non-persegi keluar dengan jumlah piksel berbeda setelah diputar dan
+    # perbandingan piksel jadi mustahil. 300px @ 76.2mm @ 100dpi -> 300px,
+    # sehingga resize jadi identitas dan tak ada galat interpolasi.
+    arr = np.full((300, 300), 200, np.uint8)
+    arr[0:50, :] = 30      # pita gelap di ATAS
+    arr[:, 0:20] = 90      # pita kedua di KIRI -> tak simetris di dua sumbu,
+                           # sehingga 90/180/270 saling terbedakan
+    out = {}
+    for deg in (0, 90, 180, 270):
+        d = _call(file=_upload("r.png", _png_bytes(arr)), width_mm=76.2, dpi=100,
+                  rotate=deg, autocontrast=False, autotrim=False)
+        assert d["ok"], d
+        out[deg] = np.asarray(Image.open(_out_path(d["downloads"][0]["url"])))
+    assert out[0].shape == (300, 300), out[0].shape
+    # np.rot90(k=-1) = searah jarum jam
+    assert np.array_equal(out[90], np.rot90(out[0], k=-1)), "90° bukan searah jarum jam"
+    assert np.array_equal(out[180], np.rot90(out[0], k=2)), "180° salah"
+    assert np.array_equal(out[270], np.rot90(out[0], k=1)), "270° salah"
+
+
+def check_rotate_size_swap() -> None:
+    """Ukuran yang dilaporkan mengikuti hasil AKHIR: 90° menukar lebar dan tinggi."""
+    arr = np.full((200, 400), 200, np.uint8)   # 400 lebar x 200 tinggi
+    arr[0:40, :] = 30
+    d0 = _call(file=_upload("s.png", _png_bytes(arr)), width_mm=40.0, height_mm=40.0,
+               dpi=100, rotate=0, autocontrast=False, autotrim=False)
+    d9 = _call(file=_upload("s.png", _png_bytes(arr)), width_mm=40.0, height_mm=40.0,
+               dpi=100, rotate=90, autocontrast=False, autotrim=False)
+    assert d0["ok"] and d9["ok"], (d0, d9)
+    w0, h0 = d0["size_mm"]
+    w9, h9 = d9["size_mm"]
+    assert abs(w0 - 40.0) < 0.3 and abs(h0 - 20.0) < 0.3, d0["size_mm"]
+    assert abs(w9 - h0) < 0.3 and abs(h9 - w0) < 0.3, (d0["size_mm"], d9["size_mm"])
+
+
+def check_rotate_mirror_order() -> None:
+    """Putar DULU, baru cermin. Untuk 90° urutan terbalik memberi hasil berbeda."""
+    arr = np.full((300, 300), 200, np.uint8)
+    arr[0:60, :] = 30      # atas
+    arr[:, 0:30] = 90      # kiri
+    d = _call(file=_upload("o.png", _png_bytes(arr)), width_mm=76.2, dpi=100,
+              rotate=90, mirror=True, autocontrast=False, autotrim=False)
+    assert d["ok"], d
+    got = np.asarray(Image.open(_out_path(d["downloads"][0]["url"])))
+    putar_lalu_cermin = np.fliplr(np.rot90(arr, k=-1))
+    cermin_lalu_putar = np.rot90(np.fliplr(arr), k=-1)
+    # Tanpa baris ini cek di bawah bisa lulus untuk kedua urutan dan tak
+    # membuktikan apa-apa.
+    assert not np.array_equal(putar_lalu_cermin, cermin_lalu_putar), \
+        "fixture tidak membedakan urutan — perbaiki fixture-nya"
+    assert np.array_equal(got, putar_lalu_cermin), \
+        "urutan salah: cermin diterapkan sebelum putar"
+
+
 def check_frame_drop_density() -> None:
     """(a lanjutan): subjek yang dibesarkan setelah bingkai dibuang harus tetap rapat
     titiknya — kalau tidak, lingkaran 40 mm keluar sebagai poligon kasar."""
@@ -228,6 +285,9 @@ if __name__ == "__main__":
         check_fit_box()
         check_mirror()
         check_autotrim()
+        check_rotate_grayscale()
+        check_rotate_size_swap()
+        check_rotate_mirror_order()
     finally:
         _cleanup()
     print("selfcheck ok")
