@@ -273,6 +273,9 @@ def check_rotate_mirror_order() -> None:
 
 def check_rotate_vector() -> None:
     """Mode Vektor memutar ke arah yang SAMA dengan Grayscale (searah jarum jam)."""
+    # Fixture raster (l.png) -> app.py merutekan ke process_raster_logo. Jalur
+    # SVG asli (process_svg_input) punya risiko regresi berbeda dan dicek
+    # terpisah oleh check_rotate_svg.
     # Bentuk L: batang tegak di kiri + kaki mendatar di bawah. Tak simetris,
     # jadi titik beratnya jauh dari pusat dan arah putaran terbaca.
     img = np.full((400, 400), 255, np.uint8)
@@ -291,6 +294,28 @@ def check_rotate_vector() -> None:
     # searah jarum jam: (x, y) -> (y, -x)
     assert abs(c[90][0] - c[0][1]) < 0.3 and abs(c[90][1] + c[0][0]) < 0.3, \
         f"arah putaran vektor salah: 0°={c[0]}, 90°={c[90]}"
+
+
+def check_rotate_svg() -> None:
+    """process_svg_input: rotate harus diterapkan SEBELUM fit_polylines, persis
+    seperti process_raster_logo — kalau tidak, target ukuran ditafsirkan dalam
+    orientasi SEBELUM putaran, bukan orientasi hasil akhir."""
+    # Sumber SVG potret 1:2 (viewBox 10x20), path persegi panjang mengisi penuh.
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 20">'
+           '<path d="M0,0 L10,0 L10,20 L0,20 Z"/></svg>')
+    size = {}
+    for deg in (0, 90):
+        d = _call(file=_upload("p.svg", io.BytesIO(svg.encode())), job="vector",
+                  width_mm=40.0, height_mm=20.0, rotate=deg)
+        assert d["ok"], d
+        x0, y0, x1, y1 = _dxf_bbox(_out_path(d["downloads"][0]["url"]))
+        size[deg] = (x1 - x0, y1 - y0)
+    # 0°: sumber tetap potret 1:2, target 40x20 -> tinggi yang membatasi -> 10x20.
+    w0, h0 = size[0]
+    assert abs(w0 - 10.0) < 0.5 and abs(h0 - 20.0) < 0.5, f"0°: {size[0]}"
+    # 90°: sumber jadi lanskap 2:1, target 40x20 -> lebar yang membatasi -> 40x20.
+    w90, h90 = size[90]
+    assert abs(w90 - 40.0) < 0.5 and abs(h90 - 20.0) < 0.5, f"90°: {size[90]}"
 
 
 def check_frame_drop_density() -> None:
@@ -321,6 +346,7 @@ if __name__ == "__main__":
         check_rotate_size_swap()
         check_rotate_mirror_order()
         check_rotate_vector()
+        check_rotate_svg()
     finally:
         _cleanup()
     print("selfcheck ok")
