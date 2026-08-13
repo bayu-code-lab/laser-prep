@@ -51,6 +51,10 @@
   .empty{color:var(--muted);font-size:14px;text-align:center;padding:40px 10px}
   .spin{display:inline-block;width:15px;height:15px;border:2px solid #1a0f08;border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes s{to{transform:rotate(360deg)}}
+  .row-hasil{border-top:1px solid var(--line);padding-top:14px;margin-top:14px}
+  .row-hasil:first-child{border-top:none;padding-top:0;margin-top:0}
+  .row-judul{font-size:13px;color:var(--muted);margin-bottom:10px;word-break:break-all}
+  .skala{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer}
 </style>
 </head>
 <body>
@@ -73,7 +77,7 @@
       <div><b>Klik / seret file ke sini</b></div>
       <div class="hint" id="dropinfo">Vektor: JPG, PNG, SVG, DXF · Grayscale: JPG, PNG, TIFF</div>
     </div>
-    <input type="file" id="file" hidden />
+    <input type="file" id="file" multiple hidden />
 
     <div class="row">
       <div>
@@ -147,7 +151,8 @@
 
 <script>
 let job = "vector";
-let picked = null;
+let picked = [];
+let hasilNama = [];
 const $ = s => document.querySelector(s);
 
 document.querySelectorAll("#jobseg button").forEach(b=>{
@@ -166,29 +171,36 @@ const drop=$("#drop"), fileInput=$("#file");
 drop.onclick=()=>fileInput.click();
 ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("hover");}));
 ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hover");}));
-drop.addEventListener("drop",e=>{ if(e.dataTransfer.files.length){ setFile(e.dataTransfer.files[0]); }});
-fileInput.onchange=e=>{ if(e.target.files.length) setFile(e.target.files[0]); };
-function setFile(f){
-  picked=f; drop.querySelector("b").textContent="📄 "+f.name; $("#go").disabled=false;
-  // Preview instan file yang diupload (sebelum tekan Proses).
-  const can = /\.(png|jpe?g|bmp|tif?f|webp|svg)$/i.test(f.name);
-  const src = can ? URL.createObjectURL(f) : "";
-  $("#result").innerHTML =
-    '<div class="previews">'
-    + '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
-      + (src ? '<img src="'+src+'">' : '<span class="empty">'+f.name+'</span>')
-      + '</div></div>'
-    + '<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox">'
-      + '<span class="empty">Tekan <b>Proses</b> untuk melihat hasil</span>'
-      + '</div></div>'
-    + '</div>';
+drop.addEventListener("drop", e => { if (e.dataTransfer.files.length) setFiles([...e.dataTransfer.files]); });
+fileInput.onchange = e => { if (e.target.files.length) setFiles([...e.target.files]); };
+function setFiles(fs){
+  picked=fs;
+  drop.querySelector("b").textContent = fs.length===1 ? "📄 "+fs[0].name : "📄 "+fs.length+" berkas";
+  $("#go").disabled=false;
+  if(fs.length===1){
+    // Preview instan file yang diupload (sebelum tekan Proses) — hanya untuk satu berkas.
+    const f=fs[0];
+    const can = /\.(png|jpe?g|bmp|tif?f|webp|svg)$/i.test(f.name);
+    const src = can ? URL.createObjectURL(f) : "";
+    $("#result").innerHTML =
+      '<div class="previews">'
+      + '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
+        + (src ? '<img src="'+src+'">' : '<span class="empty">'+f.name+'</span>')
+        + '</div></div>'
+      + '<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox">'
+        + '<span class="empty">Tekan <b>Proses</b> untuk melihat hasil</span>'
+        + '</div></div>'
+      + '</div>';
+  }else{
+    // Banyak berkas: tanpa pratinjau instan, cukup pesan penuntun.
+    $("#result").innerHTML = '<div class="empty">Tekan <b>Proses</b> untuk memulai</div>';
+  }
 }
 
-$("#go").onclick=async()=>{
-  if(!picked) return;
-  const btn=$("#go"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Memproses…';
+// Setelan form yang sama dipakai untuk tiap berkas dalam batch, dan juga
+// untuk permintaan ulang tombol "Skalakan". Task 9 menyatukannya dengan preset.
+function bacaSetelanKeFormData(){
   const fd=new FormData();
-  fd.append("file",picked);
   fd.append("job",job);
   fd.append("width_mm",$("#width_mm").value||"40");
   fd.append("height_mm",$("#height_mm").value||"0");
@@ -208,42 +220,119 @@ $("#go").onclick=async()=>{
     fd.append("autotrim",$("#autotrim").checked);
     fd.append("remove_bg",$("#remove_bg").checked);
   }
-  try{
-    const res=await fetch("/process",{method:"POST",body:fd});
-    const data=await res.json();
-    render(data);
-  }catch(err){
-    $("#result").innerHTML='<div class="err">Gagal menghubungi server: '+err+'</div>';
-  }finally{
-    btn.disabled=false; btn.textContent="Proses";
+  return fd;
+}
+
+$("#go").onclick = async () => {
+  if (!picked.length) return;
+  const btn = $("#go"); btn.disabled = true;
+  $("#result").innerHTML = "";
+  hasilNama = [];
+  let sukses = 0;
+  for (let i = 0; i < picked.length; i++) {
+    btn.innerHTML = '<span class="spin"></span>Memproses ' + (i + 1) + ' dari ' + picked.length + '…';
+    const fd = bacaSetelanKeFormData();       // dipakai bersama; lihat Task 9
+    fd.append("file", picked[i]);
+    fd.append("reset", i === 0);              // hanya file pertama mengosongkan folder sesi
+    let data;
+    try {
+      const res = await fetch("/process", { method: "POST", body: fd });
+      data = await res.json();
+    } catch (err) {
+      data = { ok: false, error: "Gagal menghubungi server: " + err };
+    }
+    // Satu file gagal TIDAK menghentikan batch — barisnya merah, sisanya lanjut.
+    $("#result").insertAdjacentHTML("beforeend", renderRow(data, picked[i].name));
+    if (data.ok) sukses++;
   }
+  segarkanHasilNama();
+  if (sukses > 1) $("#result").insertAdjacentHTML("beforeend", tombolZip());
+  btn.disabled = false; btn.textContent = "Proses";
 };
 
-function render(d){
-  const R=$("#result");
-  if(!d.ok){ R.innerHTML='<div class="err">Error: '+(d.error||"tidak diketahui")+'</div>'; return; }
-  let html="";
-  if(!d.passthrough){
-    html+='<div class="previews">';
-    html+='<div class="pv"><h3>Sebelum</h3><div class="imgbox">'+(d.before?'<img src="'+d.before+'">':'—')+'</div></div>';
-    html+='<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox">'+(d.after?'<img src="'+d.after+'">':'—')+'</div></div>';
-    html+='</div>';
+// Mengembalikan STRING, tidak menulis ke #result: gelung batch yang
+// menempelkannya satu per satu, dan tombol "Skalakan" mengganti satu baris saja.
+function renderRow(d, namaFile) {
+  let html = '<div class="row-hasil" data-nama="' + namaFile + '">';
+  html += '<div class="row-judul">' + namaFile + '</div>';
+  if (!d.ok) {
+    return html + '<div class="err">Error: ' + (d.error || "tidak diketahui") + '</div></div>';
   }
-  html+='<div class="meta">';
-  if(d.size_mm) html+='<span class="chip">Ukuran: <b>'+d.size_mm[0]+' × '+d.size_mm[1]+' mm</b></span>';
-  if(d.n_paths!=null) html+='<span class="chip">Kontur: <b>'+d.n_paths+'</b></span>';
-  html+='<span class="chip">Mode: <b>'+(d.job==="vector"?"Vektor (DXF)":"Grayscale (PNG)")+'</b></span>';
-  html+='</div>';
-  html+='<div class="dl">';
-  d.downloads.forEach((x,i)=>{ html+='<a class="'+(i>0?"sec":"")+'" href="'+x.url+'" download>⬇ '+x.label+'</a>'; });
-  html+='</div>';
-  if(d.warnings&&d.warnings.length){
-    html+='<div class="warns">';
-    d.warnings.forEach(w=>{ html+='<div class="warn">⚠ '+w+'</div>'; });
-    html+='</div>';
+  if (!d.passthrough) {
+    html += '<div class="previews">';
+    html += '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
+          + (d.before ? '<img src="' + d.before + '">' : '—') + '</div></div>';
+    html += '<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox sesudah">'
+          + (d.after ? '<img src="' + d.after + '">' : '—') + '</div></div>';
+    html += '</div>';
   }
-  R.innerHTML=html;
+  html += '<div class="meta">';
+  if (d.size_mm) html += '<span class="chip">Ukuran: <b>' + d.size_mm[0] + ' × ' + d.size_mm[1] + ' mm</b></span>';
+  if (d.n_paths != null) html += '<span class="chip">Kontur: <b>' + d.n_paths + '</b></span>';
+  html += '<span class="chip">Mode: <b>' + (d.job === "vector" ? "Vektor (DXF)" : "Grayscale (PNG)") + '</b></span>';
+  html += '</div>';
+  html += '<div class="dl">';
+  d.downloads.forEach((x, i) => {
+    html += '<a class="' + (i > 0 ? "sec" : "") + '" href="' + x.url + '" download>⬇ ' + x.label + '</a>';
+  });
+  if (d.passthrough) html += '<button class="skala">Skalakan ke ukuran target</button>';
+  html += '</div>';
+  if (d.warnings && d.warnings.length) {
+    html += '<div class="warns">';
+    d.warnings.forEach(w => { html += '<div class="warn">⚠ ' + w + '</div>'; });
+    html += '</div>';
+  }
+  return html + '</div>';
 }
+
+function tombolZip() {
+  return '<div class="dl"><button class="go" id="zip" style="width:auto">⬇ Unduh semua (ZIP)</button></div>';
+}
+
+// Dibaca ulang dari DOM, bukan diakumulasi manual: tombol "Skalakan" mengganti
+// satu baris dan mengubah nama berkasnya, dan mencocokkan nama lama secara
+// tekstual tidak bisa diandalkan — server menyanitasi nama lalu menempelkan
+// 6 hex acak (_safe_stem), jadi nama di klien tidak sama dengan nama di server.
+function segarkanHasilNama() {
+  hasilNama = [...document.querySelectorAll("#result .dl a[download]")]
+    .map(a => a.getAttribute("href").split("?")[0].split("/").pop());
+}
+
+$("#result").addEventListener("click", async e => {
+  if (e.target.classList.contains("skala")) {
+    const baris = e.target.closest(".row-hasil");
+    const nama = baris.dataset.nama;
+    const berkas = picked.find(f => f.name === nama);
+    if (!berkas) { alert("Berkas sumber tak ada lagi — unggah ulang."); return; }
+    e.target.disabled = true; e.target.textContent = "Menskalakan…";
+    const fd = bacaSetelanKeFormData();
+    fd.append("file", berkas);
+    fd.append("scale_passthrough", "true");
+    fd.append("reset", "false");           // jangan menghapus hasil batch lainnya
+    let data;
+    try {
+      data = await (await fetch("/process", { method: "POST", body: fd })).json();
+    } catch (err) {
+      data = { ok: false, error: "Gagal menghubungi server: " + err };
+    }
+    baris.outerHTML = renderRow(data, nama);
+    segarkanHasilNama();     // nama hasil berubah jadi …_scaled.dxf
+    return;
+  }
+  if (e.target.id !== "zip") return;
+  const res = await fetch("/zip", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ names: hasilNama }),
+  });
+  if (!res.ok) { alert("Gagal membuat ZIP."); return; }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "laser-prep.zip";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
 </script>
 </body>
 </html>
