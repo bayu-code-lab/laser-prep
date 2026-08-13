@@ -274,9 +274,61 @@ if __name__ == "__main__":
         # sumber 30x12 diputar jadi 12x30, lalu dilebarkan ke 60 -> tinggi 150
         assert abs(size90[0] - 60.0) < 1e-3 and abs(size90[1] - 150.0) < 1e-2, size90
 
+        # --- Arah rotasi DXF: bujur sangkar di atas simetris, bbox-nya SAMA
+        # untuk CW maupun CCW -- itu tidak membuktikan arahnya benar. Pakai
+        # bentuk L asimetris: garis panjang menunjuk KANAN (+x), garis pendek
+        # menunjuk ATAS (+y) cuma supaya bbox tidak merosot (tinggi > 0).
+        doc_dir = ezdxf.new("R2010")
+        doc_dir.units = ezunits.MM
+        doc_dir.modelspace().add_line((0, 0), (20, 0))   # penanda arah
+        doc_dir.modelspace().add_line((0, 0), (0, 5))    # cuma beri tinggi
+        dxf_dir = os.path.join(d, "dir.dxf")
+        doc_dir.saveas(dxf_dir)
+
+        out_dir = os.path.join(d, "dir_out.dxf")
+        scale_to_dxf(dxf_dir, out_dir, target_width_mm=60.0, rotate=90)
+        garis = list(ezdxf.readfile(out_dir).modelspace().query("LINE"))
+        # garis penanda = yang terpanjang (skala seragam menjaga rasio panjang)
+        penanda = max(garis, key=lambda e: e.dxf.start.distance(e.dxf.end))
+        dx = penanda.dxf.end.x - penanda.dxf.start.x
+        dy = penanda.dxf.end.y - penanda.dxf.start.y
+        # Patok TANDA & SUMBU, bukan angka absolut -- keluarannya diskalakan
+        # dan dipusatkan di (0,0), jadi magnitudonya tidak bisa ditebak persis.
+        # Garis yang semula menunjuk KANAN (+x) harus mendarat menunjuk BAWAH
+        # (-y) untuk putaran SEARAH JARUM JAM (sama seperti rotate_polylines).
+        assert abs(dx) < 1e-6 and dy < -1e-6, (
+            f"arah rotasi DXF salah, garis kanan harus mendarat menunjuk "
+            f"bawah: dx={dx}, dy={dy}"
+        )
+
         # --- PLT yang diskalakan keluar sebagai DXF ---
         outp = os.path.join(d, "p.dxf")
         sizep = scale_to_dxf(p, outp, target_width_mm=200.0)
         assert abs(sizep[0] - 200.0) < 1e-3 and abs(sizep[1] - 100.0) < 1e-2, sizep
+
+        # --- DXF tanpa geometri sama sekali = galat, bukan ukuran 0 x 0 ---
+        doc_kosong = ezdxf.new("R2010")
+        dxf_kosong = os.path.join(d, "kosong.dxf")
+        doc_kosong.saveas(dxf_kosong)
+        try:
+            read_size(dxf_kosong)
+        except ValueError as e:
+            assert "geometri" in str(e).lower(), str(e)
+        else:
+            raise AssertionError("DXF tanpa geometri seharusnya menaikkan galat")
+
+        # --- ARC harus tetap ARC setelah scale_to_dxf, bukan diratakan jadi
+        # polyline -- itulah alasan jalur DXF memakai ezdxf.transform, bukan
+        # fit_polylines/write_dxf seperti jalur PLT.
+        doc_arc = ezdxf.new("R2010")
+        doc_arc.units = ezunits.MM
+        doc_arc.modelspace().add_arc(center=(10, 10), radius=5, start_angle=0, end_angle=90)
+        dxf_arc = os.path.join(d, "arc.dxf")
+        doc_arc.saveas(dxf_arc)
+        out_arc = os.path.join(d, "arc_out.dxf")
+        scale_to_dxf(dxf_arc, out_arc, target_width_mm=40.0)
+        msp_arc = ezdxf.readfile(out_arc).modelspace()
+        assert len(list(msp_arc.query("ARC"))) == 1, "ARC harus tetap ARC, bukan diratakan"
+        assert len(list(msp_arc.query("LWPOLYLINE"))) == 0, "ARC tidak boleh berubah jadi LWPOLYLINE"
 
     print("ok")
