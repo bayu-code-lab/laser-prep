@@ -81,6 +81,9 @@ def check_preview_thumb() -> None:
     for key in ("before", "after"):
         size = Image.open(_out_path(d[key])).size
         assert max(size) <= 900, f"preview '{key}' terlalu besar: {size}"
+    # Preview hasil harus lossless: operator menilai gradasi & banding dari situ,
+    # artefak JPEG akan tampak seperti cacat yang sebenarnya tak ada di berkas ukir.
+    assert Image.open(_out_path(d["after"])).format == "PNG", d["after"]
     full = Image.open(_out_path(d["downloads"][0]["url"])).size
     assert full[0] == 4724, f"berkas download harus resolusi penuh: {full}"
 

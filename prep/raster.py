@@ -26,15 +26,19 @@ class RasterResult:
 
 
 def _thumb(img: np.ndarray, path: str, max_px: int = 900) -> None:
-    """Tulis thumbnail JPEG untuk preview di browser.
+    """Tulis thumbnail untuk preview di browser; format ikut ekstensi `path`.
 
     Preview cukup segini; berkas hasil resolusi penuh hanya untuk download —
     mengirim PNG 4000+ px ke <img> cuma bikin tab berat tanpa menambah informasi.
+    Pakai .png untuk preview hasil (operator menilai gradasi & banding dari situ,
+    artefak JPEG akan menipu), .jpg untuk preview sumber yang sekadar rujukan.
     """
     h, w = img.shape[:2]
     s = min(1.0, max_px / max(h, w))
     small = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA) if s < 1.0 else img
-    cv2.imencode(".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 80])[1].tofile(path)
+    ext = os.path.splitext(path)[1].lower()
+    params = [int(cv2.IMWRITE_JPEG_QUALITY), 80] if ext in (".jpg", ".jpeg") else []
+    cv2.imencode(ext, small, params)[1].tofile(path)
 
 
 def _remove_bg_color(bgr: np.ndarray, tol: int = 20) -> Tuple[np.ndarray, bool, str]:
@@ -76,7 +80,7 @@ def process_photo(
     os.makedirs(out_dir, exist_ok=True)
     png_path = os.path.join(out_dir, f"{stem}_grayscale.png")
     prev_before = os.path.join(out_dir, f"{stem}_before.jpg")
-    prev_after = os.path.join(out_dir, f"{stem}_after.jpg")
+    prev_after = os.path.join(out_dir, f"{stem}_after.png")
     warnings: List[str] = []
 
     img = cv2.imdecode(np.fromfile(src_path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
