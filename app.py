@@ -275,9 +275,21 @@ def zip_outputs(lp_sid: str = Cookie(default=""), names: list[str] = Body(..., e
     # dalamnya berarti memakai ruang dua kali lipat lalu menjebolnya.
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
     tmp.close()
-    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in paths:
-            z.write(p, arcname=os.path.basename(p))
+    try:
+        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as z:
+            for p in paths:
+                z.write(p, arcname=os.path.basename(p))
+    except Exception:
+        # Penulisan gagal di tengah (mis. berkas terhapus GC sesi sebelum sempat
+        # dibaca) -> BackgroundTask tak pernah terpasang, jadi arsip parsial
+        # dibersihkan di sini juga, bukan hanya pada jalur sukses. Galat
+        # penghapusan sendiri diabaikan: kegagalan ASLI yang perlu dilaporkan
+        # adalah galat penulisan ZIP, bukan urusan bersih-bersihnya.
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+        raise
     return FileResponse(
         tmp.name,
         media_type="application/zip",

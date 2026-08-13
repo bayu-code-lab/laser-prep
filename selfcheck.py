@@ -395,11 +395,12 @@ def check_zip() -> None:
         # BackgroundTask hanya berjalan di bawah ASGI; di sini kita bersihkan sendiri.
         os.remove(resp.path)
     # Tanpa penyaringan nama, "../app.py" akan mengemas berkas di luar folder sesi.
-    for jahat in ["../app.py", "a/b.png", "..", ""]:
+    for jahat in ["../app.py", "a/b.png", ".", "..", ""]:
         try:
             appmod.zip_outputs(lp_sid=SID, names=[jahat])
-        except HTTPException:
-            pass
+        except HTTPException as e:
+            # Nilai kode status dipatok spec: 400 wajib persis, bukan sekadar "galat".
+            assert e.status_code == 400, f"{jahat!r}: status {e.status_code}, harusnya 400"
         else:
             raise AssertionError(f"nama berbahaya lolos: {jahat!r}")
 
