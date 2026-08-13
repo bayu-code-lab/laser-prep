@@ -144,7 +144,10 @@ def fit_polylines(
         s = target_height_mm / src_h
         scale = s if scale is None else min(scale, s)
     if not scale or scale <= 0:
-        return polylines, (src_w, src_h)  # garis lurus sempurna: tak ada yang bisa diskalakan
+        # Bentuk merosot (garis lurus sempurna / satu titik): tak ada yang bisa
+        # diskalakan, tapi janji "dinormalkan ke pojok (0,0)" tetap ditepati.
+        out = [([(x - xmin, y - ymin) for x, y in pts], closed) for pts, closed in polylines]
+        return out, (src_w, src_h)
 
     out = [
         ([((x - xmin) * scale, (y - ymin) * scale) for x, y in pts], closed)
@@ -239,6 +242,12 @@ if __name__ == "__main__":
     assert abs(size[0] - 40.0) < 1e-6 and abs(size[1] - 20.0) < 1e-6, size
 
     assert fit_polylines([], 40.0) == ([], (0.0, 0.0))
+
+    # bentuk merosot: garis vertikal sempurna, tak ada lebar untuk diskalakan
+    vline = ([(5.0, 2.0), (5.0, 12.0)], False)
+    degen, size = fit_polylines([vline], 40.0)
+    assert size == (0.0, 10.0), size
+    assert degen[0][0] == [(0.0, 0.0), (0.0, 10.0)], degen[0][0]
 
     m = mirror_polylines([sq], 40.0)
     assert [p[0] for p in m[0][0]] == [30.0, 10.0, 10.0, 30.0], m[0][0]
