@@ -89,6 +89,7 @@ async def process(
     dpi: int = Form(600),
     remove_bg: bool = Form(False),
     autocontrast: bool = Form(True),
+    autotrim: bool = Form(True),
     clahe: bool = Form(False),
     gamma: float = Form(1.0),
 ):
@@ -170,7 +171,7 @@ async def process(
             r = process_photo(
                 src_path, sess_dir, stem,
                 target_width_mm=width_mm, target_height_mm=target_h, dpi=int(dpi),
-                remove_bg=remove_bg, autocontrast=autocontrast,
+                remove_bg=remove_bg, autocontrast=autocontrast, autotrim=autotrim,
                 clahe=clahe, gamma=float(gamma), invert=invert,
                 mirror=mirror,
             )

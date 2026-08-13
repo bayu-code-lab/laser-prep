@@ -65,6 +65,26 @@ def _remove_bg_color(bgr: np.ndarray, tol: int = 20) -> Tuple[np.ndarray, bool, 
     return out, True, "Background dihapus (latar seragam) — teks tetap aman."
 
 
+def _trim_margin(gray: np.ndarray, tol: int = 12) -> Tuple[np.ndarray, bool]:
+    """Buang margin polos di keempat sisi. Return (hasil, apakah_terpangkas).
+
+    Latar diambil dari median piksel tepi — bukan diasumsikan putih — sehingga logo
+    terang di latar gelap pun terpangkas benar. Bila seluruh gambar seragam (tak ada
+    isi) atau isinya sudah menyentuh keempat tepi, gambar dikembalikan apa adanya.
+    """
+    h, w = gray.shape
+    edge = np.concatenate([gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]])
+    bg = float(np.median(edge))
+    mask = np.abs(gray.astype(np.int16) - bg) > tol
+    if not mask.any():
+        return gray, False
+    ys, xs = np.where(mask)
+    y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+    if (y0, x0) == (0, 0) and (y1, x1) == (h - 1, w - 1):
+        return gray, False
+    return gray[y0:y1 + 1, x0:x1 + 1], True
+
+
 def process_photo(
     src_path: str,
     out_dir: str,
@@ -74,6 +94,7 @@ def process_photo(
     dpi: int = 600,
     remove_bg: bool = False,
     autocontrast: bool = True,
+    autotrim: bool = True,
     clahe: bool = False,
     invert: bool = False,
     mirror: bool = False,
@@ -104,6 +125,16 @@ def process_photo(
         warnings.append(msg)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Trim SEBELUM kontras: auto-kontras menghitung persentil atas seluruh gambar,
+    # jadi margin kosong yang lebar akan menggeser hasilnya.
+    if autotrim:
+        gray, terpangkas = _trim_margin(gray)
+        if terpangkas:
+            warnings.append(
+                "Margin polos dipangkas sebelum penskalaan — ukuran mm mengacu ke "
+                "gambarnya, bukan kanvas."
+            )
 
     if clahe:
         clip = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))

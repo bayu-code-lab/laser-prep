@@ -40,7 +40,7 @@ def _call(**kwargs) -> dict:
         lp_sid=SID, job="grayscale", width_mm=20.0, height_mm=0.0,
         auto_threshold=True, threshold=128, invert=False, filter_speckle=4,
         dpi=100, remove_bg=False, autocontrast=True, clahe=False, gamma=1.0,
-        mirror=False,
+        mirror=False, autotrim=True,
     )
     args.update(kwargs)
     return json.loads(asyncio.run(appmod.process(**args)).body)
@@ -89,7 +89,7 @@ def check_invert_grayscale() -> None:
     arr = _patch_img()
     means = {}
     for inv in (False, True):
-        d = _call(file=_upload("t.png", _png_bytes(arr)), invert=inv)
+        d = _call(file=_upload("t.png", _png_bytes(arr)), invert=inv, autotrim=False)
         assert d["ok"], d
         png = _out_path(d["downloads"][0]["url"])
         means[inv] = float(np.asarray(Image.open(png)).mean())
@@ -181,12 +181,25 @@ def check_mirror() -> None:
     for m in (False, True):
         d = _call(
             file=_upload("m.png", _png_bytes(arr)),
-            width_mm=76.2, dpi=100, mirror=m, autocontrast=False,
+            width_mm=76.2, dpi=100, mirror=m, autocontrast=False, autotrim=False,
         )
         assert d["ok"], d
         outs[m] = np.asarray(Image.open(_out_path(d["downloads"][0]["url"])))
     assert outs[False].shape == (200, 300), outs[False].shape
     assert np.array_equal(outs[True], np.fliplr(outs[False])), "hasil mirror bukan cerminan"
+
+
+def check_autotrim() -> None:
+    """(c): margin polos dibuang sebelum penskalaan, jadi mm mengacu ke artwork."""
+    arr = np.full((400, 400), 255, np.uint8)
+    arr[150:250, 150:250] = 0          # artwork 100x100 di tengah kanvas 400x400
+    hasil = {}
+    for on in (True, False):
+        d = _call(file=_upload("a.png", _png_bytes(arr)), width_mm=25.4, dpi=100, autotrim=on)
+        assert d["ok"], d
+        hasil[on] = np.asarray(Image.open(_out_path(d["downloads"][0]["url"]))).mean()
+    assert hasil[True] < 20, f"terpangkas: isi harus memenuhi bingkai, rata-rata {hasil[True]:.1f}"
+    assert hasil[False] > 150, f"tanpa trim: kanvas putih ikut, rata-rata {hasil[False]:.1f}"
 
 
 if __name__ == "__main__":
@@ -198,6 +211,7 @@ if __name__ == "__main__":
         check_dxf_centered()
         check_fit_box()
         check_mirror()
+        check_autotrim()
     finally:
         _cleanup()
     print("selfcheck ok")
