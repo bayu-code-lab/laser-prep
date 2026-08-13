@@ -185,7 +185,7 @@ function setFiles(fs){
     $("#result").innerHTML =
       '<div class="previews">'
       + '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
-        + (src ? '<img src="'+src+'">' : '<span class="empty">'+f.name+'</span>')
+        + (src ? '<img src="'+src+'">' : '<span class="empty">'+escapeHtml(f.name)+'</span>')
         + '</div></div>'
       + '<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox">'
         + '<span class="empty">Tekan <b>Proses</b> untuk melihat hasil</span>'
@@ -273,9 +273,9 @@ function renderRow(d, namaFile) {
   if (!d.passthrough) {
     html += '<div class="previews">';
     html += '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
-          + (d.before ? '<img src="' + d.before + '">' : '—') + '</div></div>';
+          + (d.before ? '<img src="' + escapeHtml(d.before) + '">' : '—') + '</div></div>';
     html += '<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox sesudah">'
-          + (d.after ? '<img src="' + d.after + '">' : '—') + '</div></div>';
+          + (d.after ? '<img src="' + escapeHtml(d.after) + '">' : '—') + '</div></div>';
     html += '</div>';
   }
   html += '<div class="meta">';
@@ -285,7 +285,7 @@ function renderRow(d, namaFile) {
   html += '</div>';
   html += '<div class="dl">';
   d.downloads.forEach((x, i) => {
-    html += '<a class="' + (i > 0 ? "sec" : "") + '" href="' + x.url + '" download>⬇ ' + escapeHtml(x.label) + '</a>';
+    html += '<a class="' + (i > 0 ? "sec" : "") + '" href="' + escapeHtml(x.url) + '" download>⬇ ' + escapeHtml(x.label) + '</a>';
   });
   if (d.passthrough) html += '<button class="skala">Skalakan ke ukuran target</button>';
   html += '</div>';
