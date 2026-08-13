@@ -11,12 +11,13 @@ import io
 import json
 import os
 import shutil
+import zipfile
 
 import cv2
 import ezdxf
 import numpy as np
 from PIL import Image
-from fastapi import UploadFile
+from fastapi import UploadFile, HTTPException
 
 import app as appmod
 
@@ -378,6 +379,31 @@ def check_batch_budget() -> None:
     assert os.path.exists(p1), "hasil yang sudah ada tidak boleh ikut hilang"
 
 
+def check_zip() -> None:
+    """ZIP memuat tepat berkas yang diminta; nama berbahaya ditolak."""
+    arr = np.full((100, 100), 60, np.uint8)
+    d1 = _call(file=_upload("a.png", _png_bytes(arr)), reset=True, autotrim=False)
+    d2 = _call(file=_upload("b.png", _png_bytes(arr)), reset=False, autotrim=False)
+    assert d1["ok"] and d2["ok"], (d1, d2)
+    n1 = os.path.basename(d1["downloads"][0]["url"].split("?")[0])
+    n2 = os.path.basename(d2["downloads"][0]["url"].split("?")[0])
+    resp = appmod.zip_outputs(lp_sid=SID, names=[n1, n2])
+    try:
+        with zipfile.ZipFile(resp.path) as z:
+            assert sorted(z.namelist()) == sorted([n1, n2]), z.namelist()
+    finally:
+        # BackgroundTask hanya berjalan di bawah ASGI; di sini kita bersihkan sendiri.
+        os.remove(resp.path)
+    # Tanpa penyaringan nama, "../app.py" akan mengemas berkas di luar folder sesi.
+    for jahat in ["../app.py", "a/b.png", "..", ""]:
+        try:
+            appmod.zip_outputs(lp_sid=SID, names=[jahat])
+        except HTTPException:
+            pass
+        else:
+            raise AssertionError(f"nama berbahaya lolos: {jahat!r}")
+
+
 if __name__ == "__main__":
     try:
         check_invert_grayscale()
@@ -396,6 +422,7 @@ if __name__ == "__main__":
         check_rotate_svg()
         check_batch_reset()
         check_batch_budget()
+        check_zip()
     finally:
         _cleanup()
     print("selfcheck ok")

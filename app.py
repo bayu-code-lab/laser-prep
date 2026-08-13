@@ -11,13 +11,16 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import tempfile
 import uuid
+import zipfile
 
 import time
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Cookie
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Cookie, Body
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from prep import (
     process_raster_logo,
@@ -38,6 +41,8 @@ SESSION_TTL = 1800
 # headroom supaya batch berhenti dengan pesan yang jelas, bukan dengan
 # "No space left on device" di tengah penulisan berkas.
 BATCH_BUDGET = 200 * 1024 * 1024
+# Nama berkas yang boleh dikemas ke ZIP: basename polos, tanpa pemisah path.
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 app = FastAPI(title="Laser Prep")
 app.mount("/out", StaticFiles(directory=OUT_DIR), name="out")
@@ -238,6 +243,47 @@ async def process(
         raise
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/zip")
+def zip_outputs(lp_sid: str = Cookie(default=""), names: list[str] = Body(..., embed=True)):
+    """Kemas berkas hasil pilihan dari folder sesi ini jadi satu ZIP.
+
+    Daftar nama datang dari browser, bukan hasil tebakan atas isi folder:
+    menebak berarti menyaring dengan pola nama (_before.jpg, _after.png), dan
+    pola itu rusak diam-diam begitu ada berkas baru bernama mirip.
+    """
+    sid = re.sub(r"[^a-f0-9]", "", lp_sid)[:32]
+    sess_dir = os.path.join(OUT_DIR, sid)
+    if not sid or not os.path.isdir(sess_dir):
+        raise HTTPException(400, "Sesi tidak ditemukan.")
+
+    paths = []
+    for n in names:
+        # Wajib basename polos DAN benar-benar ada di folder sesi ini. Tanpa ini,
+        # "../app.py" akan mengemas berkas di luar folder sesi.
+        if not n or n in (".", "..") or not _SAFE_NAME.match(n):
+            raise HTTPException(400, f"Nama berkas tidak sah: {n!r}")
+        p = os.path.join(sess_dir, n)
+        if not os.path.isfile(p):
+            raise HTTPException(400, f"Berkas tidak ada di sesi ini: {n}")
+        paths.append(p)
+    if not paths:
+        raise HTTPException(400, "Tidak ada berkas untuk dikemas.")
+
+    # Temp file DI LUAR _out: _out adalah tmpfs 256 MB, dan mengemas hasil di
+    # dalamnya berarti memakai ruang dua kali lipat lalu menjebolnya.
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp.close()
+    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in paths:
+            z.write(p, arcname=os.path.basename(p))
+    return FileResponse(
+        tmp.name,
+        media_type="application/zip",
+        filename=f"laser-prep-{sid[:6]}.zip",
+        background=BackgroundTask(os.remove, tmp.name),
+    )
 
 
 if __name__ == "__main__":
