@@ -1,0 +1,282 @@
+"""
+Berkas vektor kiriman pelanggan: .dxf dan .plt.
+
+Beda dari mode Vektor — di sini tidak ada penelusuran raster. Tugas modul ini
+menjawab "ukurannya berapa, muat tidak" tanpa merusak berkas yang sudah benar,
+dan hanya menskalakan bila operator memintanya secara eksplisit.
+"""
+from __future__ import annotations
+import math
+import os
+import re
+from typing import List, Tuple
+
+import ezdxf
+import ezdxf.bbox
+import ezdxf.transform
+from ezdxf import units as ezunits
+
+from .geometry import Polyline, _bbox, fit_polylines, rotate_polylines, write_dxf
+
+PLT_UNIT_MM = 0.025          # 1 satuan plotter HPGL = 0.025 mm (40 satuan/mm)
+
+# $INSUNITS DXF -> faktor ke mm. Kunci yang tidak ada di sini diperlakukan
+# seperti 0 (tanpa satuan): angkanya dipakai apa adanya, disertai peringatan.
+_INSUNITS_MM = {1: 25.4, 2: 304.8, 4: 1.0, 5: 10.0, 6: 1000.0, 13: 0.001, 14: 100.0}
+
+# HPGL: dua huruf perintah lalu parameternya sampai huruf berikutnya atau ';'.
+_HPGL_CMD = re.compile(r"([A-Za-z]{2})([^A-Za-z;]*)")
+
+
+def plt_to_polylines(path: str) -> List[Polyline]:
+    """Urai HPGL (.plt) jadi polyline dalam mm.
+
+    Hanya gerak ABSOLUT (PU/PD/PA) yang didukung. Bila file memakai koordinat
+    relatif (PR), fungsi ini berhenti dengan galat alih-alih melaporkan ukuran
+    yang salah — diam-diam salah jauh lebih mahal daripada berhenti.
+    """
+    with open(path, "r", errors="ignore") as f:
+        teks = f.read()
+
+    polylines: List[Polyline] = []
+    berjalan: List[Tuple[float, float]] = []
+    pena_turun = False
+    posisi: Tuple[float, float] | None = None
+
+    def tutup() -> None:
+        nonlocal berjalan
+        if len(berjalan) >= 2:
+            polylines.append((berjalan, False))
+        berjalan = []
+
+    for cmd, args in _HPGL_CMD.findall(teks):
+        c = cmd.upper()
+        if c == "PR":
+            raise ValueError(
+                "File PLT memakai koordinat relatif (PR) — belum didukung. "
+                "Ekspor ulang dari sumbernya dengan koordinat absolut, atau kirim DXF."
+            )
+        if c not in ("PU", "PD", "PA"):
+            continue
+        angka = [a for a in re.split(r"[,\s]+", args.strip()) if a]
+        titik: List[Tuple[float, float]] = []
+        for i in range(0, len(angka) - 1, 2):
+            try:
+                titik.append(
+                    (float(angka[i]) * PLT_UNIT_MM, float(angka[i + 1]) * PLT_UNIT_MM)
+                )
+            except ValueError:
+                pass                      # parameter non-koordinat, abaikan
+        if c == "PU":
+            tutup()
+            pena_turun = False
+            if titik:
+                posisi = titik[-1]
+        elif c == "PD":
+            pena_turun = True
+            if posisi is not None and not berjalan:
+                berjalan = [posisi]
+            for t in titik:
+                berjalan.append(t)
+                posisi = t
+        else:                             # PA: gerak absolut, mengikuti keadaan pena
+            for t in titik:
+                if pena_turun:
+                    if not berjalan and posisi is not None:
+                        berjalan = [posisi]
+                    berjalan.append(t)
+                posisi = t
+    tutup()
+    return polylines
+
+
+def _dxf_extents(doc) -> Tuple[float, float, float, float]:
+    """(xmin, ymin, xmax, ymax) modelspace dalam satuan asli file."""
+    kotak = ezdxf.bbox.extents(doc.modelspace())
+    if not kotak.has_data:
+        raise ValueError("File DXF tidak memuat geometri yang bisa dibaca.")
+    return kotak.extmin.x, kotak.extmin.y, kotak.extmax.x, kotak.extmax.y
+
+
+def read_size(path: str) -> Tuple[float, float, List[str]]:
+    """(lebar_mm, tinggi_mm, warnings) untuk berkas .dxf atau .plt."""
+    ext = os.path.splitext(path)[1].lower()
+
+    if ext == ".plt":
+        box = _bbox(plt_to_polylines(path))
+        if box is None:
+            raise ValueError("File PLT tidak memuat garis yang bisa dibaca.")
+        return box[2] - box[0], box[3] - box[1], []
+
+    if ext == ".dxf":
+        doc = ezdxf.readfile(path)
+        x0, y0, x1, y1 = _dxf_extents(doc)
+        insunits = int(doc.header.get("$INSUNITS", 0) or 0)
+        faktor = _INSUNITS_MM.get(insunits)
+        warnings: List[str] = []
+        if faktor is None:
+            faktor = 1.0
+            warnings.append(
+                "File DXF tidak menyatakan satuannya ($INSUNITS=0) — ukuran di atas "
+                "dianggap milimeter. Periksa di EZCAD2 bila terasa janggal."
+            )
+        return (x1 - x0) * faktor, (y1 - y0) * faktor, warnings
+
+    raise ValueError(f"Format {ext} bukan DXF/PLT.")
+
+
+def scale_to_dxf(
+    src_path: str,
+    out_path: str,
+    target_width_mm: float,
+    target_height_mm: float | None = None,
+    rotate: int = 0,
+) -> Tuple[float, float]:
+    """Skalakan (dan putar) berkas vektor pelanggan, tulis sebagai DXF mm terpusat di (0,0).
+
+    .plt keluar sebagai DXF juga, bukan PLT: setelah terurai jadi polyline,
+    fit_polylines + write_dxf yang sudah teruji langsung terpakai — termasuk
+    pemusatan di (0,0). Menulis HPGL kembali berarti kode baru tanpa penguji
+    untuk hasil yang lebih jelek; EZCAD2 membaca DXF sama baiknya.
+
+    Return (lebar_mm, tinggi_mm) hasil akhir.
+    """
+    ext = os.path.splitext(src_path)[1].lower()
+
+    if ext == ".plt":
+        polys = rotate_polylines(plt_to_polylines(src_path), rotate)
+        polys, size = fit_polylines(polys, target_width_mm, target_height_mm)
+        write_dxf(polys, out_path)
+        return size
+
+    if ext != ".dxf":
+        raise ValueError(f"Format {ext} bukan DXF/PLT.")
+
+    # DXF SENGAJA tidak diratakan jadi polyline: transform ezdxf mempertahankan
+    # busur, spline, dan blok apa adanya. Harganya, tidak ada pratinjau gambar
+    # untuk DXF.
+    # ponytail: kalau pratinjau DXF nanti diperlukan, ratakan dengan ezdxf.path
+    # KHUSUS untuk pratinjau, jangan untuk berkas keluarannya.
+    doc = ezdxf.readfile(src_path)
+    # list(...) bukan modelspace-nya langsung: helper ezdxf.transform menerima
+    # Iterable[DXFEntity], dan daftar konkret menghilangkan pertanyaan apakah
+    # iterasi tetap sah sementara entitasnya sedang diubah.
+    msp = list(doc.modelspace())
+
+    if rotate in (90, 180, 270):
+        # ezdxf memutar berlawanan jarum jam untuk sudut positif; kita ingin
+        # searah jarum jam, arah yang sama dengan rotate_polylines dan cv2.rotate.
+        ezdxf.transform.z_rotate(msp, -math.radians(rotate))
+
+    x0, y0, x1, y1 = _dxf_extents(doc)
+    src_w, src_h = x1 - x0, y1 - y0
+    if src_w <= 0 or src_h <= 0:
+        raise ValueError("Geometri DXF merosot (lebar atau tinggi nol).")
+
+    # Faktor dihitung dari koordinat MENTAH, dan doc.units dipaksa MM di bawah:
+    # dengan begitu satuan asal file tidak ikut masuk hitungan dua kali.
+    faktor = target_width_mm / src_w
+    if target_height_mm:
+        faktor = min(faktor, target_height_mm / src_h)
+    ezdxf.transform.scale_uniform(msp, faktor)
+
+    x0, y0, x1, y1 = _dxf_extents(doc)
+    ezdxf.transform.translate(msp, (-(x0 + x1) / 2, -(y0 + y1) / 2, 0))
+
+    doc.units = ezunits.MM
+    doc.saveas(out_path)
+    return src_w * faktor, src_h * faktor
+
+
+if __name__ == "__main__":
+    import tempfile
+
+    # --- PLT: 4000 satuan plotter = 100 mm, 2000 = 50 mm (40 satuan/mm) ---
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "t.plt")
+        with open(p, "w") as f:
+            f.write("IN;SP1;PU0,0;PD4000,0;PD4000,2000;PU;")
+        w, h, warn = read_size(p)
+        assert abs(w - 100.0) < 1e-6 and abs(h - 50.0) < 1e-6, (w, h)
+        assert warn == [], warn
+        polys = plt_to_polylines(p)
+        assert len(polys) == 1 and len(polys[0][0]) == 3, polys
+
+        # PR (koordinat relatif) harus BERHENTI, bukan melaporkan angka yang salah
+        pr = os.path.join(d, "r.plt")
+        with open(pr, "w") as f:
+            f.write("IN;PU0,0;PR;PD100,100;")
+        try:
+            read_size(pr)
+        except ValueError as e:
+            assert "relatif" in str(e).lower(), str(e)
+        else:
+            raise AssertionError("PLT dengan PR seharusnya menaikkan galat")
+
+        # PLT tanpa garis sama sekali = galat, bukan 0 x 0
+        kosong = os.path.join(d, "k.plt")
+        with open(kosong, "w") as f:
+            f.write("IN;SP1;PU;")
+        try:
+            read_size(kosong)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("PLT kosong seharusnya menaikkan galat")
+
+        # --- DXF dalam mm: 30 x 12 ---
+        doc = ezdxf.new("R2010")
+        doc.units = ezunits.MM
+        doc.modelspace().add_lwpolyline(
+            [(5, 5), (35, 5), (35, 17), (5, 17)], close=True)
+        dxf_mm = os.path.join(d, "mm.dxf")
+        doc.saveas(dxf_mm)
+        w, h, warn = read_size(dxf_mm)
+        assert abs(w - 30.0) < 1e-6 and abs(h - 12.0) < 1e-6, (w, h)
+        assert warn == [], warn
+
+        # --- DXF inci: koordinat sama, tapi $INSUNITS=1 -> 25.4x lebih besar ---
+        # $INSUNITS diset lewat header, bukan lewat konstanta ezdxf.units, supaya
+        # cek ini tidak bergantung pada nama konstanta versi ezdxf tertentu.
+        doc_in = ezdxf.new("R2010")
+        doc_in.header["$INSUNITS"] = 1
+        doc_in.modelspace().add_lwpolyline([(0, 0), (2, 0), (2, 1), (0, 1)], close=True)
+        dxf_in = os.path.join(d, "in.dxf")
+        doc_in.saveas(dxf_in)
+        w, h, warn = read_size(dxf_in)
+        assert abs(w - 50.8) < 1e-6 and abs(h - 25.4) < 1e-6, (w, h)
+
+        # --- DXF tanpa satuan: angka dilaporkan apa adanya + PERINGATAN ---
+        doc_u = ezdxf.new("R2010")
+        doc_u.header["$INSUNITS"] = 0
+        doc_u.modelspace().add_lwpolyline([(0, 0), (10, 0), (10, 4), (0, 4)], close=True)
+        dxf_u = os.path.join(d, "u.dxf")
+        doc_u.saveas(dxf_u)
+        w, h, warn = read_size(dxf_u)
+        assert abs(w - 10.0) < 1e-6 and abs(h - 4.0) < 1e-6, (w, h)
+        assert warn and "satuan" in warn[0].lower(), warn
+
+        # --- Penskalaan: lebar jadi 60 mm, dan hasilnya terpusat di (0,0) ---
+        out = os.path.join(d, "out.dxf")
+        size = scale_to_dxf(dxf_mm, out, target_width_mm=60.0)
+        assert abs(size[0] - 60.0) < 1e-3 and abs(size[1] - 24.0) < 1e-3, size
+        pts = [p for e in ezdxf.readfile(out).modelspace().query("LWPOLYLINE")
+               for p in e.get_points("xy")]
+        cx = (min(p[0] for p in pts) + max(p[0] for p in pts)) / 2
+        cy = (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2
+        assert abs(cx) < 1e-3 and abs(cy) < 1e-3, f"DXF hasil harus terpusat di (0,0): ({cx}, {cy})"
+        lebar = max(p[0] for p in pts) - min(p[0] for p in pts)
+        assert abs(lebar - 60.0) < 1e-3, lebar
+
+        # --- Penskalaan + putar 90°: lebar dan tinggi tertukar ---
+        out90 = os.path.join(d, "out90.dxf")
+        size90 = scale_to_dxf(dxf_mm, out90, target_width_mm=60.0, rotate=90)
+        # sumber 30x12 diputar jadi 12x30, lalu dilebarkan ke 60 -> tinggi 150
+        assert abs(size90[0] - 60.0) < 1e-3 and abs(size90[1] - 150.0) < 1e-2, size90
+
+        # --- PLT yang diskalakan keluar sebagai DXF ---
+        outp = os.path.join(d, "p.dxf")
+        sizep = scale_to_dxf(p, outp, target_width_mm=200.0)
+        assert abs(sizep[0] - 200.0) < 1e-3 and abs(sizep[1] - 100.0) < 1e-2, sizep
+
+    print("ok")
