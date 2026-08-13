@@ -12,6 +12,8 @@ import json
 import os
 import shutil
 
+import cv2
+import ezdxf
 import numpy as np
 from PIL import Image
 from fastapi import UploadFile
@@ -49,6 +51,28 @@ def _out_path(url: str) -> str:
 
 def _cleanup() -> None:
     shutil.rmtree(os.path.join(appmod.OUT_DIR, SID), ignore_errors=True)
+
+
+def _dxf_bbox(path: str) -> tuple:
+    """(xmin, ymin, xmax, ymax) dari semua LWPOLYLINE dalam DXF."""
+    doc = ezdxf.readfile(path)
+    pts = [p for e in doc.modelspace().query("LWPOLYLINE") for p in e.get_points("xy")]
+    assert pts, f"DXF tidak memuat polyline: {path}"
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _framed_img() -> np.ndarray:
+    """Bingkai persegi penuh-gambar + subjek jauh lebih kecil di dalamnya.
+
+    Meniru logo hasil scan / screenshot berbingkai: _drop_frame_and_speckle akan
+    membuang bingkainya, jadi skala harus dihitung ulang dari subjek yang tersisa.
+    """
+    img = np.full((600, 600), 255, np.uint8)
+    cv2.rectangle(img, (10, 10), (589, 589), 0, 6)
+    cv2.circle(img, (300, 300), 120, 0, -1)
+    return img
 
 
 def _patch_img() -> np.ndarray:
@@ -100,11 +124,34 @@ def check_svg_preview_before() -> None:
     assert _out_path(d["before"]) != _out_path(d["after"]), d
 
 
+def check_frame_drop_size() -> None:
+    """(a): diminta 40 mm, DXF harus benar-benar 40 mm — dan laporan harus jujur."""
+    d = _call(file=_upload("f.png", _png_bytes(_framed_img())), job="vector", width_mm=40.0)
+    assert d["ok"], d
+    x0, _, x1, _ = _dxf_bbox(_out_path(d["downloads"][0]["url"]))
+    nyata = x1 - x0
+    assert abs(nyata - 40.0) < 0.5, f"lebar DXF nyata {nyata:.2f} mm, diminta 40"
+    assert abs(d["size_mm"][0] - nyata) < 0.5, f"dilapor {d['size_mm'][0]}, nyata {nyata:.2f}"
+
+
+def check_dxf_centered() -> None:
+    """(b): geometri DXF berpusat di (0,0) supaya mendarat di tengah field EZCAD2."""
+    img = np.full((400, 400), 255, np.uint8)
+    cv2.circle(img, (200, 200), 120, 0, -1)
+    d = _call(file=_upload("c.png", _png_bytes(img)), job="vector", width_mm=30.0)
+    assert d["ok"], d
+    x0, y0, x1, y1 = _dxf_bbox(_out_path(d["downloads"][0]["url"]))
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    assert abs(cx) < 0.01 and abs(cy) < 0.01, f"pusat DXF ({cx:.3f}, {cy:.3f}), harusnya (0,0)"
+
+
 if __name__ == "__main__":
     try:
         check_invert_grayscale()
         check_preview_thumb()
         check_svg_preview_before()
+        check_frame_drop_size()
+        check_dxf_centered()
     finally:
         _cleanup()
     print("selfcheck ok")

@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 import vtracer
 
-from .geometry import svg_to_polylines_mm, write_dxf, render_preview, Polyline
+from .geometry import svg_to_polylines_mm, write_dxf, render_preview, Polyline, fit_polylines
 
 
 @dataclass
@@ -173,6 +173,10 @@ def process_raster_logo(
         svg_path, target_width_mm=target_width_mm, points_per_mm=points_per_mm
     )
     polylines = _drop_frame_and_speckle(polylines, size_mm)
+    # Skala WAJIB dihitung ulang dari kontur yang tersisa. Kalau bingkai penuh-gambar
+    # ikut terbuang, skala lama membuat BINGKAI selebar target — subjeknya jadi jauh
+    # lebih kecil dari yang diminta, sementara size_mm lama tetap melaporkan target.
+    polylines, size_mm = fit_polylines(polylines, target_width_mm)
     if not polylines:
         warnings.append("Tidak ada kontur terdeteksi. Coba matikan/hidupkan 'invert' atau ubah threshold.")
 
