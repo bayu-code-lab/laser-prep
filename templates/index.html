@@ -64,14 +64,14 @@
   <div class="card">
     <h2>1 · Jenis pekerjaan</h2>
     <div class="seg" id="jobseg">
-      <button data-job="mopa" class="active">Logo → Vektor<br><small>(besi / MOPA)</small></button>
-      <button data-job="uv">Foto → Grayscale<br><small>(kaca / UV)</small></button>
+      <button data-job="vector" class="active">Ke Vektor<br><small>(DXF)</small></button>
+      <button data-job="grayscale">Ke Grayscale<br><small>(PNG)</small></button>
     </div>
-    <div class="hint"><b>Logo → Vektor</b>: ubah logo/gambar jadi garis (DXF) untuk ukir besi/MOPA. <b>Foto → Grayscale</b>: ubah foto jadi abu-abu untuk kaca/UV.</div>
+    <div class="hint"><b>Ke Vektor (DXF)</b>: ubah logo/gambar jadi garis kontur (DXF + SVG), ukuran mm tepat. <b>Ke Grayscale (PNG)</b>: ubah foto jadi PNG abu-abu, ukuran fisik mm pada DPI yang benar.</div>
 
     <div class="drop" id="drop">
       <div><b>Klik / seret file ke sini</b></div>
-      <div class="hint" id="dropinfo">MOPA: JPG, PNG, SVG, DXF · UV: JPG, PNG, TIFF</div>
+      <div class="hint" id="dropinfo">Vektor: JPG, PNG, SVG, DXF · Grayscale: JPG, PNG, TIFF</div>
     </div>
     <input type="file" id="file" hidden />
 
@@ -79,8 +79,8 @@
     <input type="number" id="width_mm" value="40" min="1" step="1" />
     <div class="hint">Ukuran fisik hasil ukiran. Rasio tinggi dijaga otomatis.</div>
 
-    <!-- opsi MOPA -->
-    <div class="opts" id="opts-mopa">
+    <!-- opsi mode Vektor -->
+    <div class="opts" id="opts-vector">
       <label class="check"><input type="checkbox" id="auto_threshold" checked /> Threshold otomatis (Otsu)</label>
       <div class="hint">Alat memilih sendiri batas terang/gelap untuk memisahkan gambar dari latar. Biarkan menyala; matikan hanya kalau garis putus atau hasil terlalu tebal/tipis.</div>
       <div id="thrbox" style="display:none">
@@ -95,8 +95,8 @@
       <div class="hint">Menghapus titik/noda kecil yang bukan bagian logo. Naikkan bila banyak bintik; turunkan bila detail halus ikut hilang.</div>
     </div>
 
-    <!-- opsi UV -->
-    <div class="opts" id="opts-uv" style="display:none">
+    <!-- opsi mode Grayscale -->
+    <div class="opts" id="opts-grayscale" style="display:none">
       <div class="row">
         <div>
           <label>DPI</label>
@@ -112,10 +112,10 @@
       <div class="hint">Melebarkan beda terang-gelap otomatis supaya foto tidak "flat". Biarkan menyala untuk kebanyakan foto.</div>
       <label class="check"><input type="checkbox" id="clahe" /> CLAHE (kontras lokal, untuk foto)</label>
       <div class="hint">Menaikkan kontras per-bagian, memunculkan detail pada foto rumit (wajah, bayangan). Nyalakan sebagai ganti auto-kontras bila detail kurang keluar.</div>
-      <label class="check"><input type="checkbox" id="invert_uv" /> Balik (negatif)</label>
+      <label class="check"><input type="checkbox" id="invert_gray" /> Balik (negatif)</label>
       <div class="hint">Menukar terang jadi gelap (seperti klise foto). Dipakai bila material terukir jadi terang di atas dasar gelap.</div>
-      <label class="check"><input type="checkbox" id="remove_bg" /> Hapus background (perlu rembg)</label>
-      <div class="hint">Opsional — memisahkan subjek dari latar otomatis. Perlu paket <b>rembg</b> terpasang; kalau belum, opsi ini dilewati saja (aman diabaikan).</div>
+      <label class="check"><input type="checkbox" id="remove_bg" /> Hapus background polos</label>
+      <div class="hint">Latar seragam yang menyambung dari tepi dijadikan putih. Teks tetap aman. Untuk foto berlatar ramai efeknya minim.</div>
       <div class="hint">Dithering/halftone tidak dilakukan di sini — atur di EZCAD2 saat import bitmap.</div>
     </div>
 
@@ -132,7 +132,7 @@
 </div>
 
 <script>
-let job = "mopa";
+let job = "vector";
 let picked = null;
 const $ = s => document.querySelector(s);
 
@@ -140,10 +140,10 @@ document.querySelectorAll("#jobseg button").forEach(b=>{
   b.onclick=()=>{
     document.querySelectorAll("#jobseg button").forEach(x=>x.classList.remove("active"));
     b.classList.add("active"); job=b.dataset.job;
-    $("#opts-mopa").style.display = job==="mopa"?"block":"none";
-    $("#opts-uv").style.display = job==="uv"?"block":"none";
-    $("#dropinfo").textContent = job==="mopa"
-      ? "MOPA: JPG, PNG, SVG, DXF" : "UV: JPG, PNG, TIFF";
+    $("#opts-vector").style.display = job==="vector"?"block":"none";
+    $("#opts-grayscale").style.display = job==="grayscale"?"block":"none";
+    $("#dropinfo").textContent = job==="vector"
+      ? "Vektor: JPG, PNG, SVG, DXF" : "Grayscale: JPG, PNG, TIFF";
   };
 });
 $("#auto_threshold").onchange = e => { $("#thrbox").style.display = e.target.checked?"none":"block"; };
@@ -177,7 +177,7 @@ $("#go").onclick=async()=>{
   fd.append("file",picked);
   fd.append("job",job);
   fd.append("width_mm",$("#width_mm").value||"40");
-  if(job==="mopa"){
+  if(job==="vector"){
     fd.append("auto_threshold",$("#auto_threshold").checked);
     fd.append("threshold",$("#threshold").value||"128");
     fd.append("invert",$("#invert").checked);
@@ -187,7 +187,7 @@ $("#go").onclick=async()=>{
     fd.append("gamma",$("#gamma").value||"1.0");
     fd.append("autocontrast",$("#autocontrast").checked);
     fd.append("clahe",$("#clahe").checked);
-    fd.append("invert",$("#invert_uv").checked);
+    fd.append("invert",$("#invert_gray").checked);
     fd.append("remove_bg",$("#remove_bg").checked);
   }
   try{
@@ -214,7 +214,7 @@ function render(d){
   html+='<div class="meta">';
   if(d.size_mm) html+='<span class="chip">Ukuran: <b>'+d.size_mm[0]+' × '+d.size_mm[1]+' mm</b></span>';
   if(d.n_paths!=null) html+='<span class="chip">Kontur: <b>'+d.n_paths+'</b></span>';
-  html+='<span class="chip">Mode: <b>'+(d.job==="mopa"?"Vektor / MOPA":"Grayscale / UV")+'</b></span>';
+  html+='<span class="chip">Mode: <b>'+(d.job==="vector"?"Vektor (DXF)":"Grayscale (PNG)")+'</b></span>';
   html+='</div>';
   html+='<div class="dl">';
   d.downloads.forEach((x,i)=>{ html+='<a class="'+(i>0?"sec":"")+'" href="'+x.url+'" download>⬇ '+x.label+'</a>'; });

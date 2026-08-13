@@ -1,7 +1,7 @@
 """
-Cabang RASTER (Kaca UV): foto/gambar -> PNG grayscale bersih dengan ukuran fisik benar.
+Mode KE GRAYSCALE (PNG): foto/gambar -> PNG grayscale bersih dengan ukuran fisik benar.
 
-Python menyiapkan: grayscale, kontras, crop/auto-trim, penskalaan ke mm @ DPI.
+Python menyiapkan: grayscale, kontras, penskalaan ke mm @ DPI.
 DITHERING/HALFTONE sengaja TIDAK dilakukan di sini — biar EZCAD2 yang urus (lebih unggul).
 """
 from __future__ import annotations
@@ -23,6 +23,18 @@ class RasterResult:
     px: Tuple[int, int]
     dpi: int
     warnings: List[str] = field(default_factory=list)
+
+
+def _thumb(img: np.ndarray, path: str, max_px: int = 900) -> None:
+    """Tulis thumbnail JPEG untuk preview di browser.
+
+    Preview cukup segini; berkas hasil resolusi penuh hanya untuk download —
+    mengirim PNG 4000+ px ke <img> cuma bikin tab berat tanpa menambah informasi.
+    """
+    h, w = img.shape[:2]
+    s = min(1.0, max_px / max(h, w))
+    small = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA) if s < 1.0 else img
+    cv2.imencode(".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), 80])[1].tofile(path)
 
 
 def _remove_bg_color(bgr: np.ndarray, tol: int = 20) -> Tuple[np.ndarray, bool, str]:
@@ -62,8 +74,9 @@ def process_photo(
     gamma: float = 1.0,
 ) -> RasterResult:
     os.makedirs(out_dir, exist_ok=True)
-    png_path = os.path.join(out_dir, f"{stem}_uv.png")
+    png_path = os.path.join(out_dir, f"{stem}_grayscale.png")
     prev_before = os.path.join(out_dir, f"{stem}_before.jpg")
+    prev_after = os.path.join(out_dir, f"{stem}_after.jpg")
     warnings: List[str] = []
 
     img = cv2.imdecode(np.fromfile(src_path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
@@ -78,11 +91,7 @@ def process_photo(
     elif img.ndim == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-    # preview 'before' cukup thumbnail JPEG — versi full-res cuma bikin sesi berat
-    h, w = img.shape[:2]
-    s = min(1.0, 900 / max(h, w))
-    thumb = cv2.resize(img, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA) if s < 1.0 else img
-    cv2.imencode(".jpg", thumb, [int(cv2.IMWRITE_JPEG_QUALITY), 80])[1].tofile(prev_before)
+    _thumb(img, prev_before)
 
     if remove_bg:
         img, ok, msg = _remove_bg_color(img)  # sudah berlatar putih
@@ -138,10 +147,11 @@ def process_photo(
 
     # Simpan PNG grayscale dengan metadata DPI.
     Image.fromarray(out, mode="L").save(png_path, dpi=(dpi, dpi))
+    _thumb(out, prev_after)
 
     return RasterResult(
         png_path=png_path,
-        preview_after=png_path,  # hasilnya PNG grayscale itu sendiri — tak perlu salinan kedua
+        preview_after=prev_after,
         preview_before=prev_before,
         size_mm=(target_width_mm, target_h_mm),
         px=(target_w_px, target_h_px),

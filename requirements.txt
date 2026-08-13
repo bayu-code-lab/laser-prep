@@ -8,5 +8,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 
-# Hapus background di UV kini pakai flood-fill warna (built-in, tanpa model).
+# Hapus background pada mode Grayscale memakai flood-fill warna (built-in, tanpa model).
 # rembg tak lagi diperlukan.

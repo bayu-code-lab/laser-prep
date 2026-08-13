@@ -1,5 +1,5 @@
 """
-Cabang VEKTOR (MOPA): logo raster (JPG/PNG) -> vektor bersih -> DXF + SVG + preview.
+Mode KE VEKTOR (DXF): logo raster (JPG/PNG) -> vektor bersih -> DXF + SVG + preview.
 Juga menerima input SVG (langsung diratakan & diskalakan).
 
 Python HANYA menyiapkan geometri bersih & skala mm yang benar.
@@ -34,7 +34,6 @@ def _preprocess_bitmap(
     threshold: int = 128,
     auto_threshold: bool = True,
     invert: bool = False,
-    despeckle: int = 2,
 ) -> Tuple[int, List[str]]:
     """Ubah logo raster jadi bitmap hitam/putih bersih untuk vtracer.
 
@@ -144,7 +143,6 @@ def process_raster_logo(
     threshold: int = 128,
     auto_threshold: bool = True,
     invert: bool = False,
-    despeckle: int = 2,
     filter_speckle: int = 4,
     corner_threshold: int = 60,
     points_per_mm: float = 4.0,
@@ -156,7 +154,7 @@ def process_raster_logo(
     prev_after = os.path.join(out_dir, f"{stem}_after.png")
 
     used_thr, warnings = _preprocess_bitmap(
-        src_path, work_png, threshold, auto_threshold, invert, despeckle
+        src_path, work_png, threshold, auto_threshold, invert
     )
 
     # vtracer: mode biner, kurva halus.
@@ -217,7 +215,7 @@ def process_svg_input(
         dxf_path=dxf_path,
         svg_path=src_path,
         preview_after=prev_after,
-        preview_before=prev_after,
+        preview_before=src_path,  # SVG sumber; browser bisa menampilkannya langsung di <img>
         size_mm=size_mm,
         n_paths=len(polylines),
         warnings=warnings,
