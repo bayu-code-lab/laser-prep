@@ -188,6 +188,18 @@ async def process(
                     filter_speckle=int(filter_speckle),
                 )
             elif ext in PASSTHROUGH_EXT:
+                # Cermin tidak pernah diterapkan pada berkas DXF/PLT kiriman
+                # pelanggan — baik diskalakan maupun tidak — jadi cek ini satu
+                # tempat saja, dipakai kedua jalur di bawah supaya operator
+                # tidak dapat dua peringatan yang sama.
+                peringatan_mirror = []
+                if mirror:
+                    peringatan_mirror.append(
+                        "Cermin tidak diterapkan pada berkas vektor kiriman ini "
+                        "(DXF/PLT), baik yang diskalakan maupun yang disalin apa "
+                        "adanya. Cermin objeknya di EZCAD2 setelah import."
+                    )
+
                 if scale_passthrough:
                     out_dxf = os.path.join(sess_dir, f"{stem}_scaled.dxf")
                     size = scale_to_dxf(
@@ -196,16 +208,11 @@ async def process(
                         target_height_mm=target_h,
                         rotate=rotate,
                     )
-                    peringatan = []
+                    peringatan = list(peringatan_mirror)
                     if ext == ".plt":
                         peringatan.append(
                             "PLT yang diskalakan keluar sebagai DXF — EZCAD2 membacanya "
                             "sama baiknya, dan geometrinya sudah dipusatkan di (0,0)."
-                        )
-                    if mirror:
-                        peringatan.append(
-                            "Cermin TIDAK diterapkan pada berkas DXF/PLT. Bila perlu "
-                            "dicermin, cermin objeknya di EZCAD2 setelah import."
                         )
                     return JSONResponse({
                         "ok": True, "job": job, "passthrough": False,
@@ -219,7 +226,7 @@ async def process(
                 # Tidak diskalakan: berkas disajikan APA ADANYA — itulah gunanya
                 # passthrough. Yang berubah hanyalah alat kini memberi tahu ukurannya.
                 w_mm, h_mm, peringatan = read_size(src_path)
-                peringatan = list(peringatan)
+                peringatan = list(peringatan) + peringatan_mirror
                 peringatan.append(
                     f"File {ext.upper().lstrip('.')} disalin apa adanya, ukuran asli "
                     f"{w_mm:.1f} × {h_mm:.1f} mm. Tekan “Skalakan ke ukuran target” "

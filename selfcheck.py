@@ -432,6 +432,23 @@ def check_dxf_size() -> None:
     # tanpa diminta, berkas TIDAK boleh diskalakan
     assert d2["downloads"][0]["url"].endswith(".dxf"), d2["downloads"]
 
+    # Cermin diminta TANPA menekan skalakan: cermin tetap tidak diterapkan
+    # (berkas tetap apa adanya), tapi operator wajib diberi tahu — bukan
+    # menemukannya sendiri di EZCAD2.
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "m.dxf")
+        _tulis_dxf(p, 30.0, 12.0)
+        with open(p, "rb") as f:
+            buf = io.BytesIO(f.read())
+    d3 = _call(file=_upload("m.dxf", buf), job="vector", width_mm=40.0,
+               mirror=True, scale_passthrough=False)
+    assert d3["ok"], d3
+    assert d3["passthrough"] is True, d3
+    assert any("cermin" in w.lower() for w in d3["warnings"]), (
+        "mirror diminta tanpa skala harus memunculkan peringatan eksplisit: "
+        f"{d3['warnings']}"
+    )
+
 
 def check_plt_size() -> None:
     """PLT: 4000 x 2000 satuan plotter = 100 x 50 mm."""
