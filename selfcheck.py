@@ -47,6 +47,7 @@ def _call_resp(**kwargs):
         auto_threshold=True, threshold=128, invert=False, filter_speckle=4,
         dpi=100, remove_bg=False, autocontrast=True, clahe=False, gamma=1.0,
         mirror=False, autotrim=True, rotate=0, reset=True,
+        scale_passthrough=False,
     )
     args.update(kwargs)
     return asyncio.run(appmod.process(**args))
@@ -405,6 +406,63 @@ def check_zip() -> None:
             raise AssertionError(f"nama berbahaya lolos: {jahat!r}")
 
 
+def _tulis_dxf(path: str, w: float, h: float) -> None:
+    """DXF mm sederhana berukuran w x h, sengaja tidak di origin."""
+    doc = ezdxf.new("R2010")
+    doc.units = 4  # mm
+    doc.modelspace().add_lwpolyline(
+        [(5, 5), (5 + w, 5), (5 + w, 5 + h), (5, 5 + h)], close=True)
+    doc.saveas(path)
+
+
+def check_dxf_size() -> None:
+    """DXF lewat apa adanya, TAPI ukurannya wajib dilaporkan."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "k.dxf")
+        _tulis_dxf(p, 30.0, 12.0)
+        with open(p, "rb") as f:
+            buf = io.BytesIO(f.read())
+    d2 = _call(file=_upload("k.dxf", buf), job="vector", width_mm=40.0)
+    assert d2["ok"], d2
+    assert d2["passthrough"] is True, d2
+    assert d2["size_mm"] is not None, "ukuran DXF harus dilaporkan, bukan null"
+    w, h = d2["size_mm"]
+    assert abs(w - 30.0) < 0.05 and abs(h - 12.0) < 0.05, d2["size_mm"]
+    # tanpa diminta, berkas TIDAK boleh diskalakan
+    assert d2["downloads"][0]["url"].endswith(".dxf"), d2["downloads"]
+
+
+def check_plt_size() -> None:
+    """PLT: 4000 x 2000 satuan plotter = 100 x 50 mm."""
+    plt = b"IN;SP1;PU0,0;PD4000,0;PD4000,2000;PU;"
+    d = _call(file=_upload("p.plt", io.BytesIO(plt)), job="vector", width_mm=40.0)
+    assert d["ok"], d
+    assert d["passthrough"] is True, d
+    w, h = d["size_mm"]
+    assert abs(w - 100.0) < 0.05 and abs(h - 50.0) < 0.05, d["size_mm"]
+
+
+def check_dxf_scale() -> None:
+    """Ditekan tombolnya: DXF diskalakan ke lebar target dan terpusat di (0,0)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "s.dxf")
+        _tulis_dxf(p, 30.0, 12.0)
+        with open(p, "rb") as f:
+            buf = io.BytesIO(f.read())
+    r = _call(file=_upload("s.dxf", buf), job="vector", width_mm=60.0,
+              scale_passthrough=True)
+    assert r["ok"], r
+    assert r["passthrough"] is False, "hasil yang diskalakan bukan lagi passthrough"
+    w, h = r["size_mm"]
+    assert abs(w - 60.0) < 0.05 and abs(h - 24.0) < 0.05, r["size_mm"]
+    x0, y0, x1, y1 = _dxf_bbox(_out_path(r["downloads"][0]["url"]))
+    assert abs(x1 - x0 - 60.0) < 0.05, (x0, x1)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    assert abs(cx) < 0.01 and abs(cy) < 0.01, f"harus terpusat di (0,0): ({cx}, {cy})"
+
+
 if __name__ == "__main__":
     try:
         check_invert_grayscale()
@@ -424,6 +482,9 @@ if __name__ == "__main__":
         check_batch_reset()
         check_batch_budget()
         check_zip()
+        check_dxf_size()
+        check_plt_size()
+        check_dxf_scale()
     finally:
         _cleanup()
     print("selfcheck ok")

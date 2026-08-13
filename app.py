@@ -29,6 +29,8 @@ from prep import (
     RASTER_EXT,
     VECTOR_EXT,
     PASSTHROUGH_EXT,
+    read_size,
+    scale_to_dxf,
 )
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -101,6 +103,7 @@ async def process(
     height_mm: float = Form(0.0),          # 0 = tanpa batas tinggi
     mirror: bool = Form(False),
     rotate: int = Form(0),                # 0 | 90 | 180 | 270
+    scale_passthrough: bool = Form(False),   # DXF/PLT hanya diskalakan bila diminta
     # vektor
     auto_threshold: bool = Form(True),
     threshold: int = Form(128),
@@ -185,13 +188,55 @@ async def process(
                     filter_speckle=int(filter_speckle),
                 )
             elif ext in PASSTHROUGH_EXT:
-                # file sudah siap import — sajikan yang diunggah, tak perlu salinan kedua
+                if scale_passthrough:
+                    out_dxf = os.path.join(sess_dir, f"{stem}_scaled.dxf")
+                    size = scale_to_dxf(
+                        src_path, out_dxf,
+                        target_width_mm=width_mm,
+                        target_height_mm=target_h,
+                        rotate=rotate,
+                    )
+                    peringatan = []
+                    if ext == ".plt":
+                        peringatan.append(
+                            "PLT yang diskalakan keluar sebagai DXF — EZCAD2 membacanya "
+                            "sama baiknya, dan geometrinya sudah dipusatkan di (0,0)."
+                        )
+                    if mirror:
+                        peringatan.append(
+                            "Cermin TIDAK diterapkan pada berkas DXF/PLT. Bila perlu "
+                            "dicermin, cermin objeknya di EZCAD2 setelah import."
+                        )
+                    return JSONResponse({
+                        "ok": True, "job": job, "passthrough": False,
+                        "downloads": [{"label": "DXF terskala (mm)", "url": url(out_dxf)}],
+                        "before": None, "after": None,
+                        "size_mm": [round(size[0], 2), round(size[1], 2)],
+                        "n_paths": None,
+                        "warnings": peringatan,
+                    })
+
+                # Tidak diskalakan: berkas disajikan APA ADANYA — itulah gunanya
+                # passthrough. Yang berubah hanyalah alat kini memberi tahu ukurannya.
+                w_mm, h_mm, peringatan = read_size(src_path)
+                peringatan = list(peringatan)
+                peringatan.append(
+                    f"File {ext.upper().lstrip('.')} disalin apa adanya, ukuran asli "
+                    f"{w_mm:.1f} × {h_mm:.1f} mm. Tekan “Skalakan ke ukuran target” "
+                    f"bila ukurannya perlu diubah."
+                )
+                if rotate:
+                    peringatan.append(
+                        "Putaran diabaikan untuk berkas yang lewat apa adanya. "
+                        "Tekan “Skalakan ke ukuran target” bila putarannya perlu diterapkan."
+                    )
                 return JSONResponse({
                     "ok": True, "job": job, "passthrough": True,
                     "downloads": [{"label": ext.upper().lstrip("."), "url": url(src_path)}],
                     "before": None, "after": None,
-                    "size_mm": None, "n_paths": None,
-                    "warnings": [f"File {ext} sudah vektor/siap import — disalin apa adanya. Set ukuran & parameter di EZCAD2."],
+                    "size_mm": [round(w_mm, 2), round(h_mm, 2)],
+                    "n_paths": None,
+                    "warnings": peringatan,
                 })
             else:
                 raise HTTPException(400, f"Format {ext} tak didukung untuk mode Vektor.")
