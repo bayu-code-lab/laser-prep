@@ -55,6 +55,17 @@
   .row-hasil:first-child{border-top:none;padding-top:0;margin-top:0}
   .row-judul{font-size:13px;color:var(--muted);margin-bottom:10px;word-break:break-all}
   .skala{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer}
+  .seg-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:9px 12px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:600;margin-left:6px}
+  .seg-btn:first-child{margin-left:0}
+  .field-box{position:relative;width:100%;background:#fff;border:1.5px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center}
+  .field-box.lewat{border-color:#7a2626}
+  .field-box .artwork{display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .jejak{width:100%;height:100%;background:repeating-linear-gradient(45deg,#d9dee8,#d9dee8 4px,#fff 4px,#fff 8px);border:1px solid #98a1b3}
+  .row-hasil .tampil-field{width:100%}
+  .row-hasil .tampil-penuh{display:none}
+  .row-hasil.penuh .tampil-field{display:none}
+  .row-hasil.penuh .tampil-penuh{display:block}
+  .pv h3 .pas{float:right;background:var(--panel);border:1px solid var(--line);color:var(--muted);font-size:11px;padding:2px 8px;border-radius:999px;cursor:pointer;text-transform:none;letter-spacing:0}
 </style>
 </head>
 <body>
@@ -66,7 +77,14 @@
 <div class="wrap">
   <!-- KIRI: kontrol -->
   <div class="card">
-    <h2>1 · Mode</h2>
+    <h2>Preset</h2>
+    <div class="row">
+      <div><select id="preset"><option value="">— pilih preset —</option></select></div>
+      <div style="flex:0 0 auto"><button class="seg-btn" id="preset_simpan">Simpan</button>
+      <button class="seg-btn" id="preset_hapus">Hapus</button></div>
+    </div>
+
+    <h2 style="margin-top:18px">1 · Mode</h2>
     <div class="seg" id="jobseg">
       <button data-job="vector" class="active">Ke Vektor<br><small>(DXF)</small></button>
       <button data-job="grayscale">Ke Grayscale<br><small>(PNG)</small></button>
@@ -90,6 +108,23 @@
       </div>
     </div>
     <div class="hint">Ukuran fisik hasil ukiran. <b>Tinggi maks kosong</b>: tinggi ikut rasio otomatis. <b>Diisi</b>: gambar dimuatkan ke dalam kotak lebar × tinggi, rasio tetap dijaga.</div>
+
+    <label>Putar</label>
+    <select id="rotate">
+      <option value="0">0° (tanpa putar)</option>
+      <option value="90">90° searah jarum jam</option>
+      <option value="180">180°</option>
+      <option value="270">270° (90° berlawanan jarum jam)</option>
+    </select>
+    <div class="hint">Diterapkan sebelum penskalaan, jadi "lebar target" selalu merujuk lebar hasil akhir. Bila cermin juga menyala, putaran dilakukan lebih dulu.</div>
+
+    <label>Area kerja (lensa)</label>
+    <div class="row">
+      <div><select id="field"></select></div>
+      <div style="flex:0 0 auto"><button class="seg-btn" id="field_tambah">＋</button>
+      <button class="seg-btn" id="field_hapus">−</button></div>
+    </div>
+    <div class="hint">Kotak garis putus-putus pada pratinjau "Sesudah" memakai ukuran lensa ini.</div>
 
     <!-- opsi mode Vektor -->
     <div class="opts" id="opts-vector">
@@ -155,17 +190,80 @@ let picked = [];
 let hasilNama = [];
 const $ = s => document.querySelector(s);
 
+// Diekstrak dari penangan klik tombol mode supaya tulisSetelan() (pemuatan
+// preset) bisa memicu peralihan panel mode yang sama, bukan cuma set variabel job.
+function pilihMode(j){
+  document.querySelectorAll("#jobseg button").forEach(x=>x.classList.toggle("active", x.dataset.job===j));
+  job=j;
+  $("#opts-vector").style.display = job==="vector"?"block":"none";
+  $("#opts-grayscale").style.display = job==="grayscale"?"block":"none";
+  $("#dropinfo").textContent = job==="vector"
+    ? "Vektor: JPG, PNG, SVG, DXF" : "Grayscale: JPG, PNG, TIFF";
+}
 document.querySelectorAll("#jobseg button").forEach(b=>{
-  b.onclick=()=>{
-    document.querySelectorAll("#jobseg button").forEach(x=>x.classList.remove("active"));
-    b.classList.add("active"); job=b.dataset.job;
-    $("#opts-vector").style.display = job==="vector"?"block":"none";
-    $("#opts-grayscale").style.display = job==="grayscale"?"block":"none";
-    $("#dropinfo").textContent = job==="vector"
-      ? "Vektor: JPG, PNG, SVG, DXF" : "Grayscale: JPG, PNG, TIFF";
-  };
+  b.onclick=()=>pilihMode(b.dataset.job);
 });
 $("#auto_threshold").onchange = e => { $("#thrbox").style.display = e.target.checked?"none":"block"; };
+
+// Preset: seluruh setelan kontrol disimpan di localStorage, tanpa keadaan di
+// server — operator mengetik ulang lebar/DPI/gamma yang sama tiap hari.
+const PRESET_KEY = "lp_presets";
+const ambilPreset = () => JSON.parse(localStorage.getItem(PRESET_KEY) || "{}");
+const simpanPreset = o => localStorage.setItem(PRESET_KEY, JSON.stringify(o));
+
+function isiDaftarPreset(terpilih) {
+  const p = ambilPreset();
+  // Nama preset diketik operator lalu ditampilkan lagi lewat innerHTML — wajib escapeHtml.
+  $("#preset").innerHTML = '<option value="">— pilih preset —</option>'
+    + Object.keys(p).sort().map(n => '<option>' + escapeHtml(n) + '</option>').join("");
+  if (terpilih) $("#preset").value = terpilih;
+}
+$("#preset").onchange = e => { const p = ambilPreset()[e.target.value]; if (p) tulisSetelan(p); };
+$("#preset_simpan").onclick = () => {
+  const nama = (prompt("Nama preset:", $("#preset").value || "") || "").trim();
+  if (!nama) return;
+  const p = ambilPreset();
+  if (p[nama] && !confirm('Preset "' + nama + '" sudah ada. Timpa?')) return;
+  p[nama] = bacaSetelan(); simpanPreset(p); isiDaftarPreset(nama);
+};
+$("#preset_hapus").onclick = () => {
+  const nama = $("#preset").value;
+  if (!nama || !confirm('Hapus preset "' + nama + '"?')) return;
+  const p = ambilPreset(); delete p[nama]; simpanPreset(p); isiDaftarPreset("");
+};
+isiDaftarPreset("");
+
+// Daftar lensa: operator berganti-ganti lensa, jadi daftarnya bisa ditambah/
+// dihapus lewat UI dan disimpan di localStorage. Isi awal datang dari operator.
+const FIELD_KEY = "lp_fields", FIELD_SEL = "lp_field_sel";
+const FIELD_AWAL = [{ nama: "F110", w: 70, h: 70 }, { nama: "F163", w: 110, h: 110 }];
+const ambilField = () => JSON.parse(localStorage.getItem(FIELD_KEY) || "null") || FIELD_AWAL;
+const simpanField = a => localStorage.setItem(FIELD_KEY, JSON.stringify(a));
+
+function isiDaftarField() {
+  const a = ambilField();
+  // Nama lensa diketik operator lalu ditampilkan lagi lewat innerHTML — wajib escapeHtml.
+  $("#field").innerHTML = a.map(f => '<option>' + escapeHtml(f.nama) + ' — ' + f.w + ' × ' + f.h + ' mm</option>').join("");
+  const s = localStorage.getItem(FIELD_SEL);
+  if (s !== null && a[s]) $("#field").selectedIndex = Number(s);
+}
+const fieldTerpilih = () => ambilField()[$("#field").selectedIndex] || FIELD_AWAL[1];
+$("#field").onchange = () => localStorage.setItem(FIELD_SEL, $("#field").selectedIndex);
+$("#field_tambah").onclick = () => {
+  const nama = (prompt("Nama lensa (mis. F254):") || "").trim(); if (!nama) return;
+  const w = parseFloat(prompt("Lebar area kerja (mm):") || "0");
+  const h = parseFloat(prompt("Tinggi area kerja (mm):") || "0");
+  if (!(w > 0 && h > 0)) { alert("Ukuran tidak sah."); return; }
+  const a = ambilField(); a.push({ nama, w, h }); simpanField(a); isiDaftarField();
+};
+$("#field_hapus").onclick = () => {
+  const a = ambilField();
+  if (a.length <= 1) { alert("Sisakan minimal satu lensa."); return; }
+  if (!confirm("Hapus " + a[$("#field").selectedIndex].nama + "?")) return;
+  a.splice($("#field").selectedIndex, 1); simpanField(a);
+  localStorage.setItem(FIELD_SEL, 0); isiDaftarField();
+};
+isiDaftarField();
 
 const drop=$("#drop"), fileInput=$("#file");
 drop.onclick=()=>fileInput.click();
@@ -197,28 +295,50 @@ function setFiles(fs){
   }
 }
 
+// Satu daftar nama kontrol untuk SEMUA pemakainya. Sebelum ini, submit dan
+// preset akan punya daftar masing-masing, dan salah satunya pasti ketinggalan
+// begitu ada kontrol baru.
+const KONTROL_ANGKA = ["width_mm", "height_mm", "rotate", "threshold", "filter_speckle", "dpi", "gamma"];
+const KONTROL_CENTANG = ["auto_threshold", "invert", "mirror_vector", "autocontrast",
+                         "autotrim", "clahe", "invert_gray", "mirror_gray", "remove_bg"];
+
+function bacaSetelan() {
+  const o = { job };
+  KONTROL_ANGKA.forEach(k => o[k] = $("#" + k).value);
+  KONTROL_CENTANG.forEach(k => o[k] = $("#" + k).checked);
+  return o;
+}
+
+function tulisSetelan(o) {
+  if (o.job) pilihMode(o.job);          // fungsi yang dipakai tombol mode
+  KONTROL_ANGKA.forEach(k => { if (o[k] !== undefined) $("#" + k).value = o[k]; });
+  KONTROL_CENTANG.forEach(k => { if (o[k] !== undefined) $("#" + k).checked = o[k]; });
+  $("#thrbox").style.display = $("#auto_threshold").checked ? "none" : "block";
+}
+
 // Setelan form yang sama dipakai untuk tiap berkas dalam batch, dan juga
 // untuk permintaan ulang tombol "Skalakan". Task 9 menyatukannya dengan preset.
-function bacaSetelanKeFormData(){
-  const fd=new FormData();
-  fd.append("job",job);
-  fd.append("width_mm",$("#width_mm").value||"40");
-  fd.append("height_mm",$("#height_mm").value||"0");
-  if(job==="vector"){
-    fd.append("auto_threshold",$("#auto_threshold").checked);
-    fd.append("threshold",$("#threshold").value||"128");
-    fd.append("invert",$("#invert").checked);
-    fd.append("mirror",$("#mirror_vector").checked);
-    fd.append("filter_speckle",$("#filter_speckle").value||"4");
-  }else{
-    fd.append("dpi",$("#dpi").value||"600");
-    fd.append("gamma",$("#gamma").value||"1.0");
-    fd.append("autocontrast",$("#autocontrast").checked);
-    fd.append("clahe",$("#clahe").checked);
-    fd.append("invert",$("#invert_gray").checked);
-    fd.append("mirror",$("#mirror_gray").checked);
-    fd.append("autotrim",$("#autotrim").checked);
-    fd.append("remove_bg",$("#remove_bg").checked);
+function bacaSetelanKeFormData() {
+  const o = bacaSetelan(), fd = new FormData();
+  fd.append("job", o.job);
+  fd.append("width_mm", o.width_mm || "40");
+  fd.append("height_mm", o.height_mm || "0");
+  fd.append("rotate", o.rotate || "0");
+  if (o.job === "vector") {
+    fd.append("auto_threshold", o.auto_threshold);
+    fd.append("threshold", o.threshold || "128");
+    fd.append("invert", o.invert);
+    fd.append("mirror", o.mirror_vector);
+    fd.append("filter_speckle", o.filter_speckle || "4");
+  } else {
+    fd.append("dpi", o.dpi || "600");
+    fd.append("gamma", o.gamma || "1.0");
+    fd.append("autocontrast", o.autocontrast);
+    fd.append("clahe", o.clahe);
+    fd.append("invert", o.invert_gray);
+    fd.append("mirror", o.mirror_gray);
+    fd.append("autotrim", o.autotrim);
+    fd.append("remove_bg", o.remove_bg);
   }
   return fd;
 }
@@ -261,6 +381,25 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// Kotak area kerja: menggambarkan lensa terpilih sebagai persegi garis putus-putus,
+// dengan hasil di dalamnya pada skala sebenarnya — jawaban "muat atau tidak" harus
+// terlihat sebelum berkas masuk mesin. Digerbangi d.size_mm (bukan !d.passthrough):
+// DXF/PLT justru berkas yang paling butuh ini, dan ukurannya kini dilaporkan server.
+function kotakField(d) {
+  const f = fieldTerpilih(), [w, h] = d.size_mm;
+  const lewat = w > f.w + 0.05 || h > f.h + 0.05;
+  const isi = d.after
+    ? '<img src="' + escapeHtml(d.after) + '" style="width:100%;height:100%;object-fit:fill">'
+    : '<div class="jejak"></div>';       // DXF: tidak ada gambar, hanya jejak-kaki
+  // f.nama berasal dari daftar lensa yang diketik operator — wajib escapeHtml juga di sini.
+  return '<div class="field-box' + (lewat ? ' lewat' : '') + '" '
+       + 'style="aspect-ratio:' + f.w + '/' + f.h + '">'
+       + '<div class="artwork" style="width:' + Math.min(100, w / f.w * 100) + '%;'
+       + 'height:' + Math.min(100, h / f.h * 100) + '%">' + isi + '</div></div>'
+       + (lewat ? '<div class="warn">⚠ Lebih besar dari area kerja ' + escapeHtml(f.nama)
+                + ' (' + f.w + ' × ' + f.h + ' mm).</div>' : '');
+}
+
 // Mengembalikan STRING, tidak menulis ke #result: gelung batch yang
 // menempelkannya satu per satu, dan tombol "Skalakan" mengganti satu baris saja.
 function renderRow(d, namaFile) {
@@ -270,12 +409,21 @@ function renderRow(d, namaFile) {
   if (!d.ok) {
     return html + '<div class="err">Error: ' + escapeHtml(d.error || "tidak diketahui") + '</div></div>';
   }
-  if (!d.passthrough) {
+  if (d.size_mm) {
     html += '<div class="previews">';
     html += '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
-          + (d.before ? '<img src="' + escapeHtml(d.before) + '">' : '—') + '</div></div>';
-    html += '<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox sesudah">'
-          + (d.after ? '<img src="' + escapeHtml(d.after) + '">' : '—') + '</div></div>';
+          + (d.before ? '<img src="' + escapeHtml(d.before) + '">'
+                      : '<span class="empty">berkas vektor — tanpa pratinjau gambar</span>')
+          + '</div></div>';
+    // Kedua tampilan ditulis sekaligus dan ditukar lewat kelas CSS. Dengan begitu
+    // tombolnya tidak perlu menyimpan `d` atau merender ulang apa pun.
+    html += '<div class="pv"><h3>Sesudah (siap EZCAD2) '
+          + '<button class="pas">pas layar</button></h3>'
+          + '<div class="imgbox">'
+          + '<div class="tampil-field">' + kotakField(d) + '</div>'
+          + '<div class="tampil-penuh">'
+          + (d.after ? '<img src="' + escapeHtml(d.after) + '">' : '—') + '</div>'
+          + '</div></div>';
     html += '</div>';
   }
   html += '<div class="meta">';
@@ -311,6 +459,12 @@ function segarkanHasilNama() {
 }
 
 $("#result").addEventListener("click", async e => {
+  if (e.target.classList.contains("pas")) {
+    const baris = e.target.closest(".row-hasil");
+    baris.classList.toggle("penuh");
+    e.target.textContent = baris.classList.contains("penuh") ? "skala area kerja" : "pas layar";
+    return;
+  }
   if (e.target.classList.contains("skala")) {
     const baris = e.target.closest(".row-hasil");
     const nama = baris.dataset.nama;
