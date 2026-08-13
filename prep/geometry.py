@@ -112,13 +112,70 @@ def svg_to_polylines_mm(
     return polylines, (out_w, out_h)
 
 
+def _bbox(polylines: List[Polyline]) -> Tuple[float, float, float, float] | None:
+    """(xmin, ymin, xmax, ymax) dari semua titik; None bila tak ada titik sama sekali."""
+    xs = [p[0] for pts, _ in polylines for p in pts]
+    ys = [p[1] for pts, _ in polylines for p in pts]
+    if not xs:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def fit_polylines(
+    polylines: List[Polyline],
+    target_width_mm: float,
+    target_height_mm: float | None = None,
+) -> Tuple[List[Polyline], Tuple[float, float]]:
+    """Skalakan polyline agar bbox-nya pas target; kembalikan (polyline, ukuran sebenarnya).
+
+    Rasio selalu dijaga. Tanpa target_height_mm: bbox dibuat selebar target_width_mm.
+    Dengan target_height_mm: hasilnya MUAT di dalam kotak — satu sisi pas, sisi lain
+    lebih kecil atau sama. Hasil dinormalkan ke pojok (0,0); pemusatan untuk EZCAD2
+    dilakukan belakangan di write_dxf, bukan di sini.
+    """
+    box = _bbox(polylines)
+    if box is None:
+        return [], (0.0, 0.0)
+    xmin, ymin, xmax, ymax = box
+    src_w, src_h = xmax - xmin, ymax - ymin
+
+    scale = target_width_mm / src_w if src_w > 0 else None
+    if target_height_mm and src_h > 0:
+        s = target_height_mm / src_h
+        scale = s if scale is None else min(scale, s)
+    if not scale or scale <= 0:
+        # Bentuk merosot (garis lurus sempurna / satu titik): tak ada yang bisa
+        # diskalakan, tapi janji "dinormalkan ke pojok (0,0)" tetap ditepati.
+        out = [([(x - xmin, y - ymin) for x, y in pts], closed) for pts, closed in polylines]
+        return out, (src_w, src_h)
+
+    out = [
+        ([((x - xmin) * scale, (y - ymin) * scale) for x, y in pts], closed)
+        for pts, closed in polylines
+    ]
+    return out, (src_w * scale, src_h * scale)
+
+
+def mirror_polylines(polylines: List[Polyline], width_mm: float) -> List[Polyline]:
+    """Cermin horizontal: x -> width_mm - x. Urutan titik & status tertutup dipertahankan."""
+    return [([(width_mm - x, y) for x, y in pts], closed) for pts, closed in polylines]
+
+
 def write_dxf(polylines: List[Polyline], out_path: str) -> None:
-    """Tulis polyline (mm) ke DXF R2010, satuan milimeter, siap import EZCAD2."""
+    """Tulis polyline (mm) ke DXF R2010, satuan milimeter, siap import EZCAD2.
+
+    Geometri digeser agar berpusat di (0,0): field EZCAD2 berpusat di origin, jadi
+    objek yang berpusat di origin langsung mendarat di tengah tanpa ditengahkan manual.
+    """
     doc = ezdxf.new("R2010")
     doc.units = ezunits.MM  # $INSUNITS = 4 (mm)
     msp = doc.modelspace()
+    box = _bbox(polylines)
+    cx, cy = (0.0, 0.0) if box is None else ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
     for pts, closed in polylines:
-        msp.add_lwpolyline(pts, close=closed, dxfattribs={"layer": "ENGRAVE"})
+        msp.add_lwpolyline(
+            [(x - cx, y - cy) for x, y in pts], close=closed, dxfattribs={"layer": "ENGRAVE"}
+        )
     doc.saveas(out_path)
 
 
@@ -161,3 +218,50 @@ def render_preview(
         if len(seq) >= 2:
             d.line(seq, fill=(15, 15, 15), width=line_px, joint="curve")
     img.save(out_png)
+
+
+if __name__ == "__main__":
+    # self-check: fit, fit-to-box, mirror, dan pemusatan DXF
+    import os
+    import tempfile
+
+    # persegi panjang 20x10 mm, sengaja tidak di origin
+    sq = ([(10.0, 10.0), (30.0, 10.0), (30.0, 20.0), (10.0, 20.0)], True)
+
+    fitted, size = fit_polylines([sq], 40.0)
+    assert abs(size[0] - 40.0) < 1e-6 and abs(size[1] - 20.0) < 1e-6, size
+    assert min(p[0] for p in fitted[0][0]) == 0.0, fitted[0][0]
+    assert min(p[1] for p in fitted[0][0]) == 0.0, fitted[0][0]
+
+    # tinggi membatasi: 40 lebar mustahil kalau tinggi maks cuma 5
+    boxed, size = fit_polylines([sq], 40.0, 5.0)
+    assert abs(size[0] - 10.0) < 1e-6 and abs(size[1] - 5.0) < 1e-6, size
+
+    # lebar membatasi: tinggi maks longgar, hasil sama dengan tanpa kotak
+    boxed, size = fit_polylines([sq], 40.0, 999.0)
+    assert abs(size[0] - 40.0) < 1e-6 and abs(size[1] - 20.0) < 1e-6, size
+
+    assert fit_polylines([], 40.0) == ([], (0.0, 0.0))
+
+    # bentuk merosot: garis vertikal sempurna, tak ada lebar untuk diskalakan
+    vline = ([(5.0, 2.0), (5.0, 12.0)], False)
+    degen, size = fit_polylines([vline], 40.0)
+    assert size == (0.0, 10.0), size
+    assert degen[0][0] == [(0.0, 0.0), (0.0, 10.0)], degen[0][0]
+
+    m = mirror_polylines([sq], 40.0)
+    assert [p[0] for p in m[0][0]] == [30.0, 10.0, 10.0, 30.0], m[0][0]
+    assert [p[1] for p in m[0][0]] == [10.0, 10.0, 20.0, 20.0], m[0][0]
+    assert m[0][1] is True, m[0][1]
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "t.dxf")
+        write_dxf([sq], path)
+        doc = ezdxf.readfile(path)
+        pts = [p for e in doc.modelspace().query("LWPOLYLINE") for p in e.get_points("xy")]
+        cx = (min(p[0] for p in pts) + max(p[0] for p in pts)) / 2
+        cy = (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2
+        assert abs(cx) < 1e-6 and abs(cy) < 1e-6, f"DXF harus berpusat di (0,0), dapat ({cx}, {cy})"
+        write_dxf([], os.path.join(d, "kosong.dxf"))  # daftar kosong tetap sah
+
+    print("ok")

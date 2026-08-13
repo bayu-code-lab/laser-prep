@@ -65,16 +65,39 @@ def _remove_bg_color(bgr: np.ndarray, tol: int = 20) -> Tuple[np.ndarray, bool, 
     return out, True, "Background dihapus (latar seragam) — teks tetap aman."
 
 
+def _trim_margin(gray: np.ndarray, tol: int = 12) -> Tuple[np.ndarray, bool]:
+    """Buang margin polos di keempat sisi. Return (hasil, apakah_terpangkas).
+
+    Latar diambil dari median piksel tepi — bukan diasumsikan putih — sehingga logo
+    terang di latar gelap pun terpangkas benar. Bila seluruh gambar seragam (tak ada
+    isi) atau isinya sudah menyentuh keempat tepi, gambar dikembalikan apa adanya.
+    """
+    h, w = gray.shape
+    edge = np.concatenate([gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]])
+    bg = float(np.median(edge))
+    mask = np.abs(gray.astype(np.int16) - bg) > tol
+    if not mask.any():
+        return gray, False
+    ys, xs = np.where(mask)
+    y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+    if (y0, x0) == (0, 0) and (y1, x1) == (h - 1, w - 1):
+        return gray, False
+    return gray[y0:y1 + 1, x0:x1 + 1], True
+
+
 def process_photo(
     src_path: str,
     out_dir: str,
     stem: str,
     target_width_mm: float = 50.0,
+    target_height_mm: float | None = None,
     dpi: int = 600,
     remove_bg: bool = False,
     autocontrast: bool = True,
+    autotrim: bool = True,
     clahe: bool = False,
     invert: bool = False,
+    mirror: bool = False,
     gamma: float = 1.0,
 ) -> RasterResult:
     os.makedirs(out_dir, exist_ok=True)
@@ -103,6 +126,16 @@ def process_photo(
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
+    # Trim SEBELUM kontras: auto-kontras menghitung persentil atas seluruh gambar,
+    # jadi margin kosong yang lebar akan menggeser hasilnya.
+    if autotrim:
+        gray, terpangkas = _trim_margin(gray)
+        if terpangkas:
+            warnings.append(
+                "Margin polos dipangkas sebelum penskalaan — ukuran mm mengacu ke "
+                "gambarnya, bukan kanvas."
+            )
+
     if clahe:
         clip = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         gray = clip.apply(gray)
@@ -127,12 +160,26 @@ def process_photo(
     if invert:
         gray = cv2.bitwise_not(gray)
 
+    if mirror:
+        # Kaca sering diukir dari sisi belakang; stempel & cetakan juga perlu tercermin.
+        gray = cv2.flip(gray, 1)
+
     # Penskalaan fisik: mm -> px pada DPI.
     h, w = gray.shape
-    target_w_px = max(1, int(round(target_width_mm / 25.4 * dpi)))
-    scale = target_w_px / w
+    scale = (target_width_mm / 25.4 * dpi) / w
+    if target_height_mm:
+        # Muat DI DALAM kotak: sisi yang paling membatasi yang menentukan.
+        scale = min(scale, (target_height_mm / 25.4 * dpi) / h)
+    target_w_px = max(1, int(round(w * scale)))
     target_h_px = max(1, int(round(h * scale)))
-    target_h_mm = target_width_mm * (h / w)
+    out_w_mm = target_w_px / dpi * 25.4
+    target_h_mm = target_h_px / dpi * 25.4
+
+    if target_height_mm and out_w_mm < target_width_mm - 0.05:
+        warnings.append(
+            f"Dibatasi tinggi maks — hasil {out_w_mm:.1f} × {target_h_mm:.1f} mm, "
+            f"bukan {target_width_mm:.1f} mm lebar."
+        )
 
     # INTER_LINEAR saat memperbesar: INTER_CUBIC "overshoot" di tepi kontras tinggi,
     # bikin garis putus-putus/pecah di sekeliling bentuk. Linear halus, tanpa ringing.
@@ -157,7 +204,7 @@ def process_photo(
         png_path=png_path,
         preview_after=prev_after,
         preview_before=prev_before,
-        size_mm=(target_width_mm, target_h_mm),
+        size_mm=(out_w_mm, target_h_mm),
         px=(target_w_px, target_h_px),
         dpi=dpi,
         warnings=warnings,

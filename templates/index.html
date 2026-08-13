@@ -75,9 +75,17 @@
     </div>
     <input type="file" id="file" hidden />
 
-    <label>Lebar target (mm)</label>
-    <input type="number" id="width_mm" value="40" min="1" step="1" />
-    <div class="hint">Ukuran fisik hasil ukiran. Rasio tinggi dijaga otomatis.</div>
+    <div class="row">
+      <div>
+        <label>Lebar target (mm)</label>
+        <input type="number" id="width_mm" value="40" min="1" step="1" />
+      </div>
+      <div>
+        <label>Tinggi maks (mm)</label>
+        <input type="number" id="height_mm" placeholder="opsional" min="1" step="1" />
+      </div>
+    </div>
+    <div class="hint">Ukuran fisik hasil ukiran. <b>Tinggi maks kosong</b>: tinggi ikut rasio otomatis. <b>Diisi</b>: gambar dimuatkan ke dalam kotak lebar × tinggi, rasio tetap dijaga.</div>
 
     <!-- opsi mode Vektor -->
     <div class="opts" id="opts-vector">
@@ -90,6 +98,8 @@
       </div>
       <label class="check"><input type="checkbox" id="invert" /> Balik warna (subjek terang di latar gelap)</label>
       <div class="hint">Biasanya <b>tidak perlu</b> — latar dideteksi otomatis. Centang hanya kalau logomu justru terang di atas latar gelap dan hasilnya kebalik.</div>
+      <label class="check"><input type="checkbox" id="mirror_vector" /> Cermin horizontal</label>
+      <div class="hint">Membalik gambar kiri-kanan. Dipakai untuk stempel, cetakan, atau benda yang diukir dari sisi belakang. Berkas SVG yang diunduh tidak ikut dicermin — pakai DXF.</div>
       <label>Buang bintik kecil (filter speckle)</label>
       <input type="number" id="filter_speckle" value="4" min="0" max="30" />
       <div class="hint">Menghapus titik/noda kecil yang bukan bagian logo. Naikkan bila banyak bintik; turunkan bila detail halus ikut hilang.</div>
@@ -110,10 +120,14 @@
       <div class="hint"><b>DPI</b> = kerapatan titik. 600 cukup untuk kebanyakan foto kaca; makin tinggi makin halus tapi file makin berat. <b>Gamma</b> mengatur terang-gelap bagian tengah: di bawah 1 menggelapkan, di atas 1 menerangkan.</div>
       <label class="check"><input type="checkbox" id="autocontrast" checked /> Auto-kontras (auto levels)</label>
       <div class="hint">Melebarkan beda terang-gelap otomatis supaya foto tidak "flat". Biarkan menyala untuk kebanyakan foto.</div>
+      <label class="check"><input type="checkbox" id="autotrim" checked /> Auto-trim margin polos</label>
+      <div class="hint">Membuang tepi polos sebelum penskalaan, supaya "lebar 40 mm" berarti gambarnya 40 mm — bukan 33 mm gambar plus udara. Matikan bila kamu memang ingin bingkai kosongnya ikut terukir.</div>
       <label class="check"><input type="checkbox" id="clahe" /> CLAHE (kontras lokal, untuk foto)</label>
       <div class="hint">Menaikkan kontras per-bagian, memunculkan detail pada foto rumit (wajah, bayangan). Nyalakan sebagai ganti auto-kontras bila detail kurang keluar.</div>
       <label class="check"><input type="checkbox" id="invert_gray" /> Balik (negatif)</label>
       <div class="hint">Menukar terang jadi gelap (seperti klise foto). Dipakai bila material terukir jadi terang di atas dasar gelap.</div>
+      <label class="check"><input type="checkbox" id="mirror_gray" /> Cermin horizontal</label>
+      <div class="hint">Membalik gambar kiri-kanan. Dipakai bila kaca diukir dari sisi belakang sehingga hasilnya terbaca benar dari depan.</div>
       <label class="check"><input type="checkbox" id="remove_bg" /> Hapus background polos</label>
       <div class="hint">Latar seragam yang menyambung dari tepi dijadikan putih. Teks tetap aman. Untuk foto berlatar ramai efeknya minim.</div>
       <div class="hint">Dithering/halftone tidak dilakukan di sini — atur di EZCAD2 saat import bitmap.</div>
@@ -177,10 +191,12 @@ $("#go").onclick=async()=>{
   fd.append("file",picked);
   fd.append("job",job);
   fd.append("width_mm",$("#width_mm").value||"40");
+  fd.append("height_mm",$("#height_mm").value||"0");
   if(job==="vector"){
     fd.append("auto_threshold",$("#auto_threshold").checked);
     fd.append("threshold",$("#threshold").value||"128");
     fd.append("invert",$("#invert").checked);
+    fd.append("mirror",$("#mirror_vector").checked);
     fd.append("filter_speckle",$("#filter_speckle").value||"4");
   }else{
     fd.append("dpi",$("#dpi").value||"600");
@@ -188,6 +204,8 @@ $("#go").onclick=async()=>{
     fd.append("autocontrast",$("#autocontrast").checked);
     fd.append("clahe",$("#clahe").checked);
     fd.append("invert",$("#invert_gray").checked);
+    fd.append("mirror",$("#mirror_gray").checked);
+    fd.append("autotrim",$("#autotrim").checked);
     fd.append("remove_bg",$("#remove_bg").checked);
   }
   try{

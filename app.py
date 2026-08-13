@@ -78,6 +78,8 @@ async def process(
     file: UploadFile = File(...),
     job: str = Form(...),                 # "vector" | "grayscale"
     width_mm: float = Form(50.0),
+    height_mm: float = Form(0.0),          # 0 = tanpa batas tinggi
+    mirror: bool = Form(False),
     # vektor
     auto_threshold: bool = Form(True),
     threshold: int = Form(128),
@@ -87,6 +89,7 @@ async def process(
     dpi: int = Form(600),
     remove_bg: bool = Form(False),
     autocontrast: bool = Form(True),
+    autotrim: bool = Form(True),
     clahe: bool = Form(False),
     gamma: float = Form(1.0),
 ):
@@ -106,17 +109,29 @@ async def process(
     except Exception:
         width_mm = 50.0
 
+    try:
+        height_mm = max(0.0, float(height_mm))
+    except Exception:
+        height_mm = 0.0
+    target_h = height_mm if height_mm > 0 else None
+
     def url(p: str) -> str:
         return f"/out/{sid}/" + os.path.basename(p)
 
     try:
         if job == "vector":
             if ext in VECTOR_EXT:
-                r = process_svg_input(src_path, sess_dir, stem, target_width_mm=width_mm)
+                r = process_svg_input(
+                    src_path, sess_dir, stem,
+                    target_width_mm=width_mm, target_height_mm=target_h,
+                    mirror=mirror,
+                )
             elif ext in RASTER_EXT:
                 r = process_raster_logo(
                     src_path, sess_dir, stem,
                     target_width_mm=width_mm,
+                    target_height_mm=target_h,
+                    mirror=mirror,
                     auto_threshold=auto_threshold,
                     threshold=int(threshold),
                     invert=invert,
@@ -155,9 +170,10 @@ async def process(
                 raise HTTPException(400, f"Mode Grayscale butuh gambar raster (JPG/PNG/TIFF). Dapat: {ext}")
             r = process_photo(
                 src_path, sess_dir, stem,
-                target_width_mm=width_mm, dpi=int(dpi),
-                remove_bg=remove_bg, autocontrast=autocontrast,
+                target_width_mm=width_mm, target_height_mm=target_h, dpi=int(dpi),
+                remove_bg=remove_bg, autocontrast=autocontrast, autotrim=autotrim,
                 clahe=clahe, gamma=float(gamma), invert=invert,
+                mirror=mirror,
             )
             os.remove(src_path)  # sumber tak dipakai lagi; preview 'before' sudah punya thumbnail sendiri
 
