@@ -37,7 +37,7 @@ def _upload(name: str, buf: io.BytesIO) -> UploadFile:
 def _call(**kwargs) -> dict:
     """Panggil endpoint process() dengan default lengkap; kwargs menimpa yang perlu."""
     args = dict(
-        lp_sid=SID, job="grayscale", width_mm=20.0,
+        lp_sid=SID, job="grayscale", width_mm=20.0, height_mm=0.0,
         auto_threshold=True, threshold=128, invert=False, filter_speckle=4,
         dpi=100, remove_bg=False, autocontrast=True, clahe=False, gamma=1.0,
     )
@@ -145,6 +145,31 @@ def check_dxf_centered() -> None:
     assert abs(cx) < 0.01 and abs(cy) < 0.01, f"pusat DXF ({cx:.3f}, {cy:.3f}), harusnya (0,0)"
 
 
+def check_fit_box() -> None:
+    """(e): minta 40x20 pada gambar persegi -> muat di kotak, rasio terjaga."""
+    # Vektor: lingkaran pada kanvas persegi, tinggi yang membatasi.
+    img = np.full((400, 400), 255, np.uint8)
+    cv2.circle(img, (200, 200), 150, 0, -1)
+    d = _call(file=_upload("b.png", _png_bytes(img)), job="vector", width_mm=40.0, height_mm=20.0)
+    assert d["ok"], d
+    x0, y0, x1, y1 = _dxf_bbox(_out_path(d["downloads"][0]["url"]))
+    w, h = x1 - x0, y1 - y0
+    assert w <= 40.05 and h <= 20.05, f"vektor keluar kotak: {w:.2f} x {h:.2f}"
+    assert abs(h - 20.0) < 0.5, f"sisi pembatas harus pas 20 mm, dapat {h:.2f}"
+
+    # Grayscale: gradien penuh-kanvas (tak ada margin polos, jadi bebas dari auto-trim).
+    grad = np.tile(np.linspace(0, 255, 400).astype(np.uint8), (400, 1))
+    d = _call(file=_upload("g.png", _png_bytes(grad)), width_mm=40.0, height_mm=20.0, dpi=100)
+    assert d["ok"], d
+    gw, gh = d["size_mm"]
+    # Toleransi 0.2 mm: cabang grayscale membulatkan ke piksel utuh, jadi 20 mm @100 dpi
+    # jatuh di 79 px = 20.07 mm. Batas yang lebih ketat akan gagal karena pembulatan,
+    # bukan karena fit-to-box-nya salah.
+    assert gw <= 40.2 and gh <= 20.2, f"grayscale keluar kotak: {gw} x {gh}"
+    assert abs(gh - 20.0) < 0.3, f"sisi pembatas harus ≈20 mm, dapat {gh}"
+    assert any("tinggi maks" in x.lower() for x in d["warnings"]), d["warnings"]
+
+
 if __name__ == "__main__":
     try:
         check_invert_grayscale()
@@ -152,6 +177,7 @@ if __name__ == "__main__":
         check_svg_preview_before()
         check_frame_drop_size()
         check_dxf_centered()
+        check_fit_box()
     finally:
         _cleanup()
     print("selfcheck ok")

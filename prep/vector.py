@@ -140,6 +140,7 @@ def process_raster_logo(
     out_dir: str,
     stem: str,
     target_width_mm: float = 50.0,
+    target_height_mm: float | None = None,
     threshold: int = 128,
     auto_threshold: bool = True,
     invert: bool = False,
@@ -176,9 +177,15 @@ def process_raster_logo(
     # Skala WAJIB dihitung ulang dari kontur yang tersisa. Kalau bingkai penuh-gambar
     # ikut terbuang, skala lama membuat BINGKAI selebar target — subjeknya jadi jauh
     # lebih kecil dari yang diminta, sementara size_mm lama tetap melaporkan target.
-    polylines, size_mm = fit_polylines(polylines, target_width_mm)
+    polylines, size_mm = fit_polylines(polylines, target_width_mm, target_height_mm)
     if not polylines:
         warnings.append("Tidak ada kontur terdeteksi. Coba matikan/hidupkan 'invert' atau ubah threshold.")
+
+    if target_height_mm and size_mm[0] < target_width_mm - 0.05:
+        warnings.append(
+            f"Dibatasi tinggi maks — hasil {size_mm[0]:.1f} × {size_mm[1]:.1f} mm, "
+            f"bukan {target_width_mm:.1f} mm lebar."
+        )
 
     write_dxf(polylines, dxf_path)
     render_preview(polylines, size_mm, prev_after)
@@ -199,6 +206,7 @@ def process_svg_input(
     out_dir: str,
     stem: str,
     target_width_mm: float = 50.0,
+    target_height_mm: float | None = None,
     points_per_mm: float = 4.0,
 ) -> VectorResult:
     os.makedirs(out_dir, exist_ok=True)
@@ -207,10 +215,19 @@ def process_svg_input(
 
     warnings: List[str] = []
     polylines, size_mm = svg_to_polylines_mm(
-        src_path, target_width_mm=target_width_mm, points_per_mm=points_per_mm
+        src_path,
+        target_width_mm=target_width_mm,
+        target_height_mm=target_height_mm,
+        points_per_mm=points_per_mm,
     )
     if not polylines:
         warnings.append("SVG tidak memuat path yang bisa dibaca (mungkin berisi teks/gambar raster).")
+
+    if target_height_mm and size_mm[0] < target_width_mm - 0.05:
+        warnings.append(
+            f"Dibatasi tinggi maks — hasil {size_mm[0]:.1f} × {size_mm[1]:.1f} mm, "
+            f"bukan {target_width_mm:.1f} mm lebar."
+        )
 
     write_dxf(polylines, dxf_path)
     render_preview(polylines, size_mm, prev_after)
