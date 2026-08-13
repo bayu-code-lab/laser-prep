@@ -113,7 +113,7 @@ async def process(
         height_mm = max(0.0, float(height_mm))
     except Exception:
         height_mm = 0.0
-    target_h = height_mm if height_mm >= 1.0 else None
+    target_h = height_mm if height_mm > 0 else None
 
     def url(p: str) -> str:
         return f"/out/{sid}/" + os.path.basename(p)

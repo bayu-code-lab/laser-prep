@@ -16,7 +16,7 @@ import vtracer
 
 from .geometry import (
     svg_to_polylines_mm, write_dxf, render_preview, Polyline,
-    fit_polylines, mirror_polylines,
+    fit_polylines, mirror_polylines, _bbox,
 )
 
 
@@ -178,6 +178,25 @@ def process_raster_logo(
         svg_path, target_width_mm=target_width_mm, points_per_mm=points_per_mm
     )
     polylines = _drop_frame_and_speckle(polylines, size_mm)
+
+    # Kepadatan titik ditentukan saat sampling, memakai skala SEBELUM bingkai dibuang.
+    # Kalau subjek yang tersisa jauh lebih kecil dari bingkainya, membesarkannya lewat
+    # fit_polylines menaikkan koordinat TANPA menambah titik — lingkaran 40 mm bisa
+    # keluar sebagai poligon 35 sisi. Jadi bila pembesarannya besar, ulangi sampling
+    # pada skala yang benar. Sekali ulang, bukan gelung: pass kedua sudah pas.
+    box = _bbox(polylines)
+    if box is not None:
+        w_sub = box[2] - box[0]
+        if w_sub > 0:
+            perbesaran = target_width_mm / w_sub
+            if perbesaran > 1.5:
+                polylines, size2 = svg_to_polylines_mm(
+                    svg_path,
+                    target_width_mm=target_width_mm * perbesaran,
+                    points_per_mm=points_per_mm,
+                )
+                polylines = _drop_frame_and_speckle(polylines, size2)
+
     # Skala WAJIB dihitung ulang dari kontur yang tersisa. Kalau bingkai penuh-gambar
     # ikut terbuang, skala lama membuat BINGKAI selebar target — subjeknya jadi jauh
     # lebih kecil dari yang diminta, sementara size_mm lama tetap melaporkan target.

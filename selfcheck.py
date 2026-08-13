@@ -101,7 +101,7 @@ def check_preview_thumb() -> None:
     """bug #2: preview harus thumbnail; berkas download tetap resolusi penuh."""
     arr = np.full((1200, 1200), 128, np.uint8)
     arr[0:400, :] = 20
-    d = _call(file=_upload("t.png", _png_bytes(arr)), width_mm=200.0, dpi=600)
+    d = _call(file=_upload("t.png", _png_bytes(arr)), width_mm=200.0, dpi=600, autotrim=False)
     assert d["ok"], d
     for key in ("before", "after"):
         size = Image.open(_out_path(d[key])).size
@@ -157,6 +157,7 @@ def check_fit_box() -> None:
     w, h = x1 - x0, y1 - y0
     assert w <= 40.05 and h <= 20.05, f"vektor keluar kotak: {w:.2f} x {h:.2f}"
     assert abs(h - 20.0) < 0.5, f"sisi pembatas harus pas 20 mm, dapat {h:.2f}"
+    assert abs(w - h) < 0.5, f"sumber persegi harus keluar persegi, bukan diregangkan: {w:.2f} x {h:.2f}"
 
     # Grayscale: gradien penuh-kanvas (tak ada margin polos, jadi bebas dari auto-trim).
     grad = np.tile(np.linspace(0, 255, 400).astype(np.uint8), (400, 1))
@@ -169,6 +170,7 @@ def check_fit_box() -> None:
     assert gw <= 40.2 and gh <= 20.2, f"grayscale keluar kotak: {gw} x {gh}"
     assert abs(gh - 20.0) < 0.3, f"sisi pembatas harus ≈20 mm, dapat {gh}"
     assert any("tinggi maks" in x.lower() for x in d["warnings"]), d["warnings"]
+    assert abs(gw - gh) < 0.2, f"sumber persegi harus keluar persegi, bukan diregangkan: {gw} x {gh}"
 
 
 def check_mirror() -> None:
@@ -202,6 +204,19 @@ def check_autotrim() -> None:
     assert hasil[False] > 150, f"tanpa trim: kanvas putih ikut, rata-rata {hasil[False]:.1f}"
 
 
+def check_frame_drop_density() -> None:
+    """(a lanjutan): subjek yang dibesarkan setelah bingkai dibuang harus tetap rapat
+    titiknya — kalau tidak, lingkaran 40 mm keluar sebagai poligon kasar."""
+    img = np.full((900, 900), 255, np.uint8)
+    cv2.rectangle(img, (5, 5), (894, 894), 0, 5)   # bingkai penuh-gambar
+    cv2.circle(img, (450, 450), 60, 0, -1)         # subjek kecil: ~13% lebar kanvas
+    d = _call(file=_upload("d.png", _png_bytes(img)), job="vector", width_mm=40.0)
+    assert d["ok"], d
+    doc = ezdxf.readfile(_out_path(d["downloads"][0]["url"]))
+    n = max(len(e.get_points("xy")) for e in doc.modelspace().query("LWPOLYLINE"))
+    assert n >= 200, f"kontur terbesar cuma {n} titik — lingkaran 40 mm jadi poligon kasar"
+
+
 if __name__ == "__main__":
     try:
         check_invert_grayscale()
@@ -209,6 +224,7 @@ if __name__ == "__main__":
         check_svg_preview_before()
         check_frame_drop_size()
         check_dxf_centered()
+        check_frame_drop_density()
         check_fit_box()
         check_mirror()
         check_autotrim()
