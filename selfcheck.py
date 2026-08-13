@@ -40,6 +40,7 @@ def _call(**kwargs) -> dict:
         lp_sid=SID, job="grayscale", width_mm=20.0, height_mm=0.0,
         auto_threshold=True, threshold=128, invert=False, filter_speckle=4,
         dpi=100, remove_bg=False, autocontrast=True, clahe=False, gamma=1.0,
+        mirror=False,
     )
     args.update(kwargs)
     return json.loads(asyncio.run(appmod.process(**args)).body)
@@ -170,6 +171,24 @@ def check_fit_box() -> None:
     assert any("tinggi maks" in x.lower() for x in d["warnings"]), d["warnings"]
 
 
+def check_mirror() -> None:
+    """(d): hasil mirror harus cerminan PERSIS dari hasil biasa, bukan sekadar berbeda."""
+    # 300 px @ 76.2 mm @ 100 dpi -> tepat 300 px keluar, jadi resize = identitas
+    # dan perbandingan piksel bebas dari galat pembulatan interpolasi.
+    arr = np.full((200, 300), 200, np.uint8)
+    arr[:, 0:60] = 30
+    outs = {}
+    for m in (False, True):
+        d = _call(
+            file=_upload("m.png", _png_bytes(arr)),
+            width_mm=76.2, dpi=100, mirror=m, autocontrast=False,
+        )
+        assert d["ok"], d
+        outs[m] = np.asarray(Image.open(_out_path(d["downloads"][0]["url"])))
+    assert outs[False].shape == (200, 300), outs[False].shape
+    assert np.array_equal(outs[True], np.fliplr(outs[False])), "hasil mirror bukan cerminan"
+
+
 if __name__ == "__main__":
     try:
         check_invert_grayscale()
@@ -178,6 +197,7 @@ if __name__ == "__main__":
         check_frame_drop_size()
         check_dxf_centered()
         check_fit_box()
+        check_mirror()
     finally:
         _cleanup()
     print("selfcheck ok")

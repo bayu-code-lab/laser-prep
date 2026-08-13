@@ -76,6 +76,7 @@ def process_photo(
     autocontrast: bool = True,
     clahe: bool = False,
     invert: bool = False,
+    mirror: bool = False,
     gamma: float = 1.0,
 ) -> RasterResult:
     os.makedirs(out_dir, exist_ok=True)
@@ -127,6 +128,10 @@ def process_photo(
 
     if invert:
         gray = cv2.bitwise_not(gray)
+
+    if mirror:
+        # Kaca sering diukir dari sisi belakang; stempel & cetakan juga perlu tercermin.
+        gray = cv2.flip(gray, 1)
 
     # Penskalaan fisik: mm -> px pada DPI.
     h, w = gray.shape

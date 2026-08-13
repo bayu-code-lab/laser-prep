@@ -14,7 +14,10 @@ import cv2
 import numpy as np
 import vtracer
 
-from .geometry import svg_to_polylines_mm, write_dxf, render_preview, Polyline, fit_polylines
+from .geometry import (
+    svg_to_polylines_mm, write_dxf, render_preview, Polyline,
+    fit_polylines, mirror_polylines,
+)
 
 
 @dataclass
@@ -141,6 +144,7 @@ def process_raster_logo(
     stem: str,
     target_width_mm: float = 50.0,
     target_height_mm: float | None = None,
+    mirror: bool = False,
     threshold: int = 128,
     auto_threshold: bool = True,
     invert: bool = False,
@@ -187,6 +191,10 @@ def process_raster_logo(
             f"bukan {target_width_mm:.1f} mm lebar."
         )
 
+    if mirror:
+        polylines = mirror_polylines(polylines, size_mm[0])
+        warnings.append("Dicermin horizontal. Catatan: berkas SVG yang diunduh TIDAK ikut dicermin — pakai DXF.")
+
     write_dxf(polylines, dxf_path)
     render_preview(polylines, size_mm, prev_after)
 
@@ -207,6 +215,7 @@ def process_svg_input(
     stem: str,
     target_width_mm: float = 50.0,
     target_height_mm: float | None = None,
+    mirror: bool = False,
     points_per_mm: float = 4.0,
 ) -> VectorResult:
     os.makedirs(out_dir, exist_ok=True)
@@ -228,6 +237,10 @@ def process_svg_input(
             f"Dibatasi tinggi maks — hasil {size_mm[0]:.1f} × {size_mm[1]:.1f} mm, "
             f"bukan {target_width_mm:.1f} mm lebar."
         )
+
+    if mirror:
+        polylines = mirror_polylines(polylines, size_mm[0])
+        warnings.append("Dicermin horizontal. Catatan: berkas SVG yang diunduh TIDAK ikut dicermin — pakai DXF.")
 
     write_dxf(polylines, dxf_path)
     render_preview(polylines, size_mm, prev_after)
