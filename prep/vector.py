@@ -16,7 +16,7 @@ import vtracer
 
 from .geometry import (
     svg_to_polylines_mm, write_dxf, render_preview, Polyline,
-    fit_polylines, mirror_polylines, _bbox,
+    fit_polylines, mirror_polylines, rotate_polylines, _bbox,
 )
 
 
@@ -145,6 +145,7 @@ def process_raster_logo(
     target_width_mm: float = 50.0,
     target_height_mm: float | None = None,
     mirror: bool = False,
+    rotate: int = 0,
     threshold: int = 128,
     auto_threshold: bool = True,
     invert: bool = False,
@@ -197,6 +198,12 @@ def process_raster_logo(
                 )
                 polylines = _drop_frame_and_speckle(polylines, size2)
 
+    # Putar SEBELUM fit: dengan begitu "lebar target" merujuk lebar hasil AKHIR,
+    # bukan lebar sebelum diputar. Cermin tetap sesudah fit karena
+    # mirror_polylines butuh lebar akhir — urutan efektifnya jadi putar -> cermin,
+    # sama dengan mode Grayscale.
+    polylines = rotate_polylines(polylines, rotate)
+
     # Skala WAJIB dihitung ulang dari kontur yang tersisa. Kalau bingkai penuh-gambar
     # ikut terbuang, skala lama membuat BINGKAI selebar target — subjeknya jadi jauh
     # lebih kecil dari yang diminta, sementara size_mm lama tetap melaporkan target.
@@ -235,6 +242,7 @@ def process_svg_input(
     target_width_mm: float = 50.0,
     target_height_mm: float | None = None,
     mirror: bool = False,
+    rotate: int = 0,
     points_per_mm: float = 4.0,
 ) -> VectorResult:
     os.makedirs(out_dir, exist_ok=True)
@@ -242,12 +250,17 @@ def process_svg_input(
     prev_after = os.path.join(out_dir, f"{stem}_after.png")
 
     warnings: List[str] = []
+    # Sampling memakai target_width_mm supaya kepadatan titiknya kira-kira benar,
+    # tapi ukuran AKHIR ditentukan fit_polylines SESUDAH putaran — kalau target
+    # tinggi diterapkan di sini, ia akan menafsirkan kotak dalam orientasi sebelum
+    # diputar. Alur ini kini sama persis dengan process_raster_logo.
     polylines, size_mm = svg_to_polylines_mm(
         src_path,
         target_width_mm=target_width_mm,
-        target_height_mm=target_height_mm,
         points_per_mm=points_per_mm,
     )
+    polylines = rotate_polylines(polylines, rotate)
+    polylines, size_mm = fit_polylines(polylines, target_width_mm, target_height_mm)
     if not polylines:
         warnings.append("SVG tidak memuat path yang bisa dibaca (mungkin berisi teks/gambar raster).")
 

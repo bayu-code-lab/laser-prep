@@ -64,6 +64,16 @@ def _dxf_bbox(path: str) -> tuple:
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _dxf_centroid(path: str) -> tuple:
+    """Rata-rata posisi semua verteks LWPOLYLINE. Cukup untuk menjawab
+    'ke arah mana bentuknya berputar' — bbox tidak bisa, karena bbox bentuk L
+    tetap persegi ke arah mana pun ia diputar."""
+    doc = ezdxf.readfile(path)
+    pts = [p for e in doc.modelspace().query("LWPOLYLINE") for p in e.get_points("xy")]
+    assert pts, f"DXF tidak memuat polyline: {path}"
+    return sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+
+
 def _framed_img() -> np.ndarray:
     """Bingkai persegi penuh-gambar + subjek jauh lebih kecil di dalamnya.
 
@@ -261,6 +271,28 @@ def check_rotate_mirror_order() -> None:
         "urutan salah: cermin diterapkan sebelum putar"
 
 
+def check_rotate_vector() -> None:
+    """Mode Vektor memutar ke arah yang SAMA dengan Grayscale (searah jarum jam)."""
+    # Bentuk L: batang tegak di kiri + kaki mendatar di bawah. Tak simetris,
+    # jadi titik beratnya jauh dari pusat dan arah putaran terbaca.
+    img = np.full((400, 400), 255, np.uint8)
+    cv2.rectangle(img, (60, 60), (120, 340), 0, -1)
+    cv2.rectangle(img, (60, 280), (340, 340), 0, -1)
+    c = {}
+    for deg in (0, 90):
+        d = _call(file=_upload("l.png", _png_bytes(img)), job="vector",
+                  width_mm=40.0, rotate=deg)
+        assert d["ok"], d
+        c[deg] = _dxf_centroid(_out_path(d["downloads"][0]["url"]))
+    # DXF dipusatkan di (0,0), jadi titik berat yang jauh dari nol = bentuk
+    # memang tak simetris. Tanpa ini, cek rotasi di bawah bisa lulus untuk
+    # bentuk simetris apa pun.
+    assert abs(c[0][0]) > 0.5 or abs(c[0][1]) > 0.5, f"fixture terlalu simetris: {c[0]}"
+    # searah jarum jam: (x, y) -> (y, -x)
+    assert abs(c[90][0] - c[0][1]) < 0.3 and abs(c[90][1] + c[0][0]) < 0.3, \
+        f"arah putaran vektor salah: 0°={c[0]}, 90°={c[90]}"
+
+
 def check_frame_drop_density() -> None:
     """(a lanjutan): subjek yang dibesarkan setelah bingkai dibuang harus tetap rapat
     titiknya — kalau tidak, lingkaran 40 mm keluar sebagai poligon kasar."""
@@ -288,6 +320,7 @@ if __name__ == "__main__":
         check_rotate_grayscale()
         check_rotate_size_swap()
         check_rotate_mirror_order()
+        check_rotate_vector()
     finally:
         _cleanup()
     print("selfcheck ok")

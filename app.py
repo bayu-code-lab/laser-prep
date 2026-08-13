@@ -133,6 +133,7 @@ async def process(
                     src_path, sess_dir, stem,
                     target_width_mm=width_mm, target_height_mm=target_h,
                     mirror=mirror,
+                    rotate=rotate,
                 )
             elif ext in RASTER_EXT:
                 r = process_raster_logo(
@@ -140,6 +141,7 @@ async def process(
                     target_width_mm=width_mm,
                     target_height_mm=target_h,
                     mirror=mirror,
+                    rotate=rotate,
                     auto_threshold=auto_threshold,
                     threshold=int(threshold),
                     invert=invert,
