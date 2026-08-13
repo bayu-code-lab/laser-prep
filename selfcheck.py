@@ -34,8 +34,13 @@ def _upload(name: str, buf: io.BytesIO) -> UploadFile:
     return UploadFile(filename=name, file=buf)
 
 
-def _call(**kwargs) -> dict:
-    """Panggil endpoint process() dengan default lengkap; kwargs menimpa yang perlu."""
+def _call_resp(**kwargs):
+    """Panggil endpoint process() dengan default lengkap; kwargs menimpa yang perlu.
+
+    Mengembalikan OBJEK RESPONS (bukan dict) supaya status_code ikut bisa
+    diperiksa — dipakai saat sebuah cek perlu memastikan kode status, bukan
+    cuma isi body-nya.
+    """
     args = dict(
         lp_sid=SID, job="grayscale", width_mm=20.0, height_mm=0.0,
         auto_threshold=True, threshold=128, invert=False, filter_speckle=4,
@@ -43,7 +48,13 @@ def _call(**kwargs) -> dict:
         mirror=False, autotrim=True, rotate=0, reset=True,
     )
     args.update(kwargs)
-    return json.loads(asyncio.run(appmod.process(**args)).body)
+    return asyncio.run(appmod.process(**args))
+
+
+def _call(**kwargs) -> dict:
+    """Sama seperti _call_resp, tapi langsung kembalikan body yang sudah di-parse —
+    dipakai mayoritas cek yang tak peduli status_code."""
+    return json.loads(_call_resp(**kwargs).body)
 
 
 def _out_path(url: str) -> str:
@@ -355,9 +366,13 @@ def check_batch_budget() -> None:
     asli = appmod.BATCH_BUDGET
     try:
         appmod.BATCH_BUDGET = 1     # apa pun yang sudah ada pasti sudah melewatinya
-        d2 = _call(file=_upload("b.png", _png_bytes(arr)), reset=False, autotrim=False)
+        resp2 = _call_resp(file=_upload("b.png", _png_bytes(arr)), reset=False, autotrim=False)
     finally:
         appmod.BATCH_BUDGET = asli
+    # Disengaja 200, bukan 400/500: ruang habis adalah kondisi yang diharapkan,
+    # bukan kesalahan server — jangan "diperbaiki" jadi kode status galat.
+    assert resp2.status_code == 200, resp2.status_code
+    d2 = json.loads(resp2.body)
     assert not d2["ok"], "file kedua seharusnya ditolak saat ruang habis"
     assert "penuh" in d2["error"].lower(), d2["error"]
     assert os.path.exists(p1), "hasil yang sudah ada tidak boleh ikut hilang"
