@@ -30,7 +30,7 @@ Alat ini menghasilkan file **import-ready**, BUKAN **mark-ready**. Artinya:
 | Mode | Untuk | Input | Output | Yang dikerjakan Python |
 |---|---|---|---|---|
 | **Ke Vektor (DXF)** | Ukiran garis / kontur | JPG, PNG, SVG, (DXF/PLT passthrough) | **DXF** (mm) + SVG | Bersihkan bitmap, vektorisasi (vtracer), buang speckle, skala mm presisi |
-| **Ke Grayscale (PNG)** | Ukiran bernada abu-abu | JPG, PNG, TIFF | **PNG grayscale** (DPI benar) | Grayscale, auto-kontras/CLAHE, gamma, skala fisik mm @ DPI |
+| **Ke Grayscale (PNG)** | Ukiran bernada abu-abu | JPG, PNG, TIFF | **PNG grayscale** (DPI benar) | Grayscale, auto-trim, auto-kontras/CLAHE, gamma, skala fisik mm @ DPI |
 
 ---
 
@@ -62,8 +62,10 @@ Buka browser ke **http://127.0.0.1:8000** . Selesai — semua jalan lokal, tanpa
 
 1. Pilih **mode** (Ke Vektor (DXF), atau Ke Grayscale (PNG)).
 2. **Seret file** pelanggan ke kotak upload.
-3. Isi **Lebar target (mm)** — ukuran fisik hasil ukiran (tinggi mengikuti rasio otomatis).
-4. Atur opsi bila perlu (threshold, invert, speckle / DPI, kontras, gamma).
+3. Isi **Lebar target (mm)** — ukuran fisik hasil ukiran. Isi **Tinggi maks (mm)** bila
+   hasilnya harus muat di area tertentu; kosongkan bila tinggi boleh ikut rasio.
+4. Atur opsi bila perlu (threshold, invert, cermin, speckle / DPI, kontras, gamma,
+   auto-trim).
 5. Tekan **Proses**, cek **preview sesudah**. Kurang pas? Ubah opsi, proses lagi.
 6. **Download** hasilnya (DXF untuk mode Vektor, PNG untuk mode Grayscale).
 
@@ -93,6 +95,11 @@ Buka browser ke **http://127.0.0.1:8000** . Selesai — semua jalan lokal, tanpa
   sehingga di EZCAD2 tinggal di-hatch untuk terisi penuh.
 - **Foto kaca**: pakai **CLAHE** untuk foto berdetail; **gamma** untuk mengatur terang-gelap
   tengah; DPI 600 cukup untuk kebanyakan pekerjaan (naikkan hanya bila perlu sangat halus).
+- **Cermin horizontal**: untuk stempel, cetakan, dan kaca yang diukir dari sisi belakang
+  supaya terbaca benar dari depan. Pada mode Vektor, berkas SVG yang diunduh tidak ikut
+  dicermin — pakai DXF-nya.
+- **Auto-trim** membuang tepi polos sebelum penskalaan, jadi ukuran mm mengacu ke gambarnya
+  dan bukan ke kanvas. Matikan bila bingkai kosongnya memang ingin ikut terukir.
 
 ## Belum didukung (bisa jadi pengembangan lanjutan)
 
