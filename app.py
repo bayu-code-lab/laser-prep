@@ -34,6 +34,10 @@ os.makedirs(OUT_DIR, exist_ok=True)
 # Detik sejak upload terakhir sebelum folder sesi dihapus. Mtime hanya diperbarui saat
 # upload, bukan saat preview/download — jadi ini juga batas "berapa lama tab boleh nganggur".
 SESSION_TTL = 1800
+# Batas total hasil dalam satu folder sesi. _out adalah tmpfs 256 MB; sisanya
+# headroom supaya batch berhenti dengan pesan yang jelas, bukan dengan
+# "No space left on device" di tengah penulisan berkas.
+BATCH_BUDGET = 200 * 1024 * 1024
 
 app = FastAPI(title="Laser Prep")
 app.mount("/out", StaticFiles(directory=OUT_DIR), name="out")
@@ -62,6 +66,16 @@ def _fresh_session_dir(sid: str) -> str:
     return d
 
 
+def _dir_size(d: str) -> int:
+    """Total byte berkas biasa langsung di dalam d (folder sesi tidak bersarang)."""
+    total = 0
+    for name in os.listdir(d):
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            total += os.path.getsize(p)
+    return total
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     with open(os.path.join(BASE, "templates", "index.html"), encoding="utf-8") as f:
@@ -77,6 +91,7 @@ async def process(
     lp_sid: str = Cookie(default=""),
     file: UploadFile = File(...),
     job: str = Form(...),                 # "vector" | "grayscale"
+    reset: bool = Form(True),             # True = kosongkan folder sesi (file pertama batch)
     width_mm: float = Form(50.0),
     height_mm: float = Form(0.0),          # 0 = tanpa batas tinggi
     mirror: bool = Form(False),
@@ -95,8 +110,25 @@ async def process(
     gamma: float = Form(1.0),
 ):
     sid = re.sub(r"[^a-f0-9]", "", lp_sid)[:32] or uuid.uuid4().hex
-    sess_dir = _fresh_session_dir(sid)
+    if reset:
+        sess_dir = _fresh_session_dir(sid)
+    else:
+        # File ke-2 dan seterusnya dalam satu batch menumpang folder yang sama —
+        # mengosongkannya di sini akan memakan hasil file-file sebelumnya.
+        sess_dir = os.path.join(OUT_DIR, sid)
+        os.makedirs(sess_dir, exist_ok=True)
     _gc_sessions()
+
+    if _dir_size(sess_dir) >= BATCH_BUDGET:
+        # Status 200, bukan 500: ini kondisi yang diharapkan, bukan kesalahan
+        # server, dan gelung batch di browser merendernya lewat jalur galat
+        # yang sama dengan galat lain.
+        return JSONResponse({
+            "ok": False,
+            "error": f"Ruang hasil penuh ({BATCH_BUDGET // (1024 * 1024)} MB). "
+                     f"File ini tidak diproses — unduh hasil yang sudah ada, "
+                     f"lalu proses sisanya sebagai batch baru.",
+        })
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     stem = _safe_stem(file.filename or "file")

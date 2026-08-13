@@ -40,7 +40,7 @@ def _call(**kwargs) -> dict:
         lp_sid=SID, job="grayscale", width_mm=20.0, height_mm=0.0,
         auto_threshold=True, threshold=128, invert=False, filter_speckle=4,
         dpi=100, remove_bg=False, autocontrast=True, clahe=False, gamma=1.0,
-        mirror=False, autotrim=True, rotate=0,
+        mirror=False, autotrim=True, rotate=0, reset=True,
     )
     args.update(kwargs)
     return json.loads(asyncio.run(appmod.process(**args)).body)
@@ -331,6 +331,38 @@ def check_frame_drop_density() -> None:
     assert n >= 200, f"kontur terbesar cuma {n} titik — lingkaran 40 mm jadi poligon kasar"
 
 
+def check_batch_reset() -> None:
+    """File kedua dalam batch (reset=False) tidak boleh menghapus hasil file pertama."""
+    arr = np.full((100, 100), 60, np.uint8)
+    d1 = _call(file=_upload("satu.png", _png_bytes(arr)), reset=True, autotrim=False)
+    assert d1["ok"], d1
+    p1 = _out_path(d1["downloads"][0]["url"])
+    assert os.path.exists(p1), p1
+    d2 = _call(file=_upload("dua.png", _png_bytes(arr)), reset=False, autotrim=False)
+    assert d2["ok"], d2
+    p2 = _out_path(d2["downloads"][0]["url"])
+    assert p1 != p2, "nama hasil bertabrakan — _safe_stem seharusnya membedakannya"
+    assert os.path.exists(p1), "hasil file pertama terhapus oleh file kedua"
+    assert os.path.exists(p2), p2
+
+
+def check_batch_budget() -> None:
+    """Ruang habis: file berikutnya ditolak dengan pesan, hasil lama tetap utuh."""
+    arr = np.full((100, 100), 60, np.uint8)
+    d1 = _call(file=_upload("a.png", _png_bytes(arr)), reset=True, autotrim=False)
+    assert d1["ok"], d1
+    p1 = _out_path(d1["downloads"][0]["url"])
+    asli = appmod.BATCH_BUDGET
+    try:
+        appmod.BATCH_BUDGET = 1     # apa pun yang sudah ada pasti sudah melewatinya
+        d2 = _call(file=_upload("b.png", _png_bytes(arr)), reset=False, autotrim=False)
+    finally:
+        appmod.BATCH_BUDGET = asli
+    assert not d2["ok"], "file kedua seharusnya ditolak saat ruang habis"
+    assert "penuh" in d2["error"].lower(), d2["error"]
+    assert os.path.exists(p1), "hasil yang sudah ada tidak boleh ikut hilang"
+
+
 if __name__ == "__main__":
     try:
         check_invert_grayscale()
@@ -347,6 +379,8 @@ if __name__ == "__main__":
         check_rotate_mirror_order()
         check_rotate_vector()
         check_rotate_svg()
+        check_batch_reset()
+        check_batch_budget()
     finally:
         _cleanup()
     print("selfcheck ok")
