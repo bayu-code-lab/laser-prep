@@ -250,13 +250,25 @@ $("#go").onclick = async () => {
   btn.disabled = false; btn.textContent = "Proses";
 };
 
+// Batas kepercayaan: nama berkas datang dari pelanggan (operator cuma menyeret,
+// tidak mengetik/memeriksanya), dan pesan galat/peringatan dari server bisa memuat
+// nama/isi berkas itu juga. Semua nilai dari luar WAJIB lewat sini sebelum masuk ke
+// string HTML — dipakai untuk teks maupun atribut (data-nama="..."), makanya tanda
+// kutip ikut di-escape, bukan cuma < dan >.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
 // Mengembalikan STRING, tidak menulis ke #result: gelung batch yang
 // menempelkannya satu per satu, dan tombol "Skalakan" mengganti satu baris saja.
 function renderRow(d, namaFile) {
-  let html = '<div class="row-hasil" data-nama="' + namaFile + '">';
-  html += '<div class="row-judul">' + namaFile + '</div>';
+  const namaAman = escapeHtml(namaFile);
+  let html = '<div class="row-hasil" data-nama="' + namaAman + '">';
+  html += '<div class="row-judul">' + namaAman + '</div>';
   if (!d.ok) {
-    return html + '<div class="err">Error: ' + (d.error || "tidak diketahui") + '</div></div>';
+    return html + '<div class="err">Error: ' + escapeHtml(d.error || "tidak diketahui") + '</div></div>';
   }
   if (!d.passthrough) {
     html += '<div class="previews">';
@@ -273,13 +285,13 @@ function renderRow(d, namaFile) {
   html += '</div>';
   html += '<div class="dl">';
   d.downloads.forEach((x, i) => {
-    html += '<a class="' + (i > 0 ? "sec" : "") + '" href="' + x.url + '" download>⬇ ' + x.label + '</a>';
+    html += '<a class="' + (i > 0 ? "sec" : "") + '" href="' + x.url + '" download>⬇ ' + escapeHtml(x.label) + '</a>';
   });
   if (d.passthrough) html += '<button class="skala">Skalakan ke ukuran target</button>';
   html += '</div>';
   if (d.warnings && d.warnings.length) {
     html += '<div class="warns">';
-    d.warnings.forEach(w => { html += '<div class="warn">⚠ ' + w + '</div>'; });
+    d.warnings.forEach(w => { html += '<div class="warn">⚠ ' + escapeHtml(w) + '</div>'; });
     html += '</div>';
   }
   return html + '</div>';
