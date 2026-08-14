@@ -57,9 +57,18 @@
   .skala{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer}
   .seg-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:9px 12px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:600;margin-left:6px}
   .seg-btn:first-child{margin-left:0}
-  .field-box{position:relative;width:100%;background:#fff;border:1.5px dashed var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center}
+  /* field-stage = bidang gabungan yang membungkus lensa DAN artwork sekaligus,
+     ukurannya (aspect-ratio) dihitung dari yang TERBESAR di antara keduanya per
+     sisi. Ini yang menjamin tinggi wrapper (jalur normal, tempat teks peringatan
+     ikut mengalir di bawahnya) selalu cukup — kalau tingginya cuma mengikuti
+     kotak lensa (seperti percobaan pertama), artwork yang meluber ke bawah
+     menutupi teks peringatannya sendiri. field-box & artwork sama-sama posisi
+     absolute+transform (bukan flex) supaya tidak ada flex-shrink yang memaksa
+     artwork mengecil kembali ke ukuran kotak.*/
+  .field-stage{position:relative;width:100%;background:#fff;border-radius:8px}
+  .field-stage .artwork{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .field-box{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border:1.5px dashed var(--line);border-radius:8px;background:transparent}
   .field-box.lewat{border-color:#7a2626}
-  .field-box .artwork{display:flex;align-items:center;justify-content:center;overflow:hidden}
   .jejak{width:100%;height:100%;background:repeating-linear-gradient(45deg,#d9dee8,#d9dee8 4px,#fff 4px,#fff 8px);border:1px solid #98a1b3}
   .row-hasil .tampil-field{width:100%}
   .row-hasil .tampil-penuh{display:none}
@@ -208,7 +217,16 @@ $("#auto_threshold").onchange = e => { $("#thrbox").style.display = e.target.che
 // Preset: seluruh setelan kontrol disimpan di localStorage, tanpa keadaan di
 // server — operator mengetik ulang lebar/DPI/gamma yang sama tiap hari.
 const PRESET_KEY = "lp_presets";
-const ambilPreset = () => JSON.parse(localStorage.getItem(PRESET_KEY) || "{}");
+// try/catch wajib: localStorage bisa berisi apa saja (rusak manual, diedit tangan,
+// sisa versi lama). JSON.parse yang melempar tanpa ditangkap di sini akan
+// menghentikan SELURUH <script> di tengah jalan, sebelum drop zone/tombol Proses
+// sempat terpasang — alat jadi mati total, bukan cuma presetnya yang hilang.
+const ambilPreset = () => {
+  try {
+    const p = JSON.parse(localStorage.getItem(PRESET_KEY) || "{}");
+    return (p && typeof p === "object" && !Array.isArray(p)) ? p : {};
+  } catch { return {}; }
+};
 const simpanPreset = o => localStorage.setItem(PRESET_KEY, JSON.stringify(o));
 
 function isiDaftarPreset(terpilih) {
@@ -237,7 +255,15 @@ isiDaftarPreset("");
 // dihapus lewat UI dan disimpan di localStorage. Isi awal datang dari operator.
 const FIELD_KEY = "lp_fields", FIELD_SEL = "lp_field_sel";
 const FIELD_AWAL = [{ nama: "F110", w: 70, h: 70 }, { nama: "F163", w: 110, h: 110 }];
-const ambilField = () => JSON.parse(localStorage.getItem(FIELD_KEY) || "null") || FIELD_AWAL;
+// Sama seperti ambilPreset(): tangkap JSON rusak, dan tolak juga bentuk yang salah
+// (mis. angka atau array kosong) — keduanya jatuh kembali ke FIELD_AWAL supaya alat
+// tetap hidup dengan setelan bawaan, bukan mati total.
+const ambilField = () => {
+  try {
+    const a = JSON.parse(localStorage.getItem(FIELD_KEY) || "null");
+    return (Array.isArray(a) && a.length) ? a : FIELD_AWAL;
+  } catch { return FIELD_AWAL; }
+};
 const simpanField = a => localStorage.setItem(FIELD_KEY, JSON.stringify(a));
 
 function isiDaftarField() {
@@ -247,7 +273,10 @@ function isiDaftarField() {
   const s = localStorage.getItem(FIELD_SEL);
   if (s !== null && a[s]) $("#field").selectedIndex = Number(s);
 }
-const fieldTerpilih = () => ambilField()[$("#field").selectedIndex] || FIELD_AWAL[1];
+// Fallback FIELD_AWAL[0] (F110) — sama dengan yang ditampilkan <select> saat
+// belum ada seleksi eksplisit (index 0), supaya kotak tidak pernah memakai
+// lensa yang berbeda dari yang tertulis di dropdown.
+const fieldTerpilih = () => ambilField()[$("#field").selectedIndex] || FIELD_AWAL[0];
 $("#field").onchange = () => localStorage.setItem(FIELD_SEL, $("#field").selectedIndex);
 $("#field_tambah").onclick = () => {
   const nama = (prompt("Nama lensa (mis. F254):") || "").trim(); if (!nama) return;
@@ -388,14 +417,33 @@ function escapeHtml(s) {
 function kotakField(d) {
   const f = fieldTerpilih(), [w, h] = d.size_mm;
   const lewat = w > f.w + 0.05 || h > f.h + 0.05;
+  // Dulu artwork-nya yang dipotong ke maks 100% — kotak dan artwork jadi terlihat
+  // identik walau artwork-nya 3x lebih besar dari lensa (berbohong secara visual).
+  // Sekarang: bidang gabungan (field-stage) berukuran sisi TERBESAR di antara
+  // lensa dan artwork per sumbu (maxW/maxH) — lensa dan artwork sama-sama
+  // digambar sebagai persentase dari bidang gabungan ini, terpusat lewat
+  // position:absolute (bukan nested+flex: flex-shrink akan memaksa artwork
+  // mengecil lagi supaya muat, meniadakan efek "meluber" yang justru diinginkan).
+  // aspect-ratio field-stage sengaja dari maxW/maxH, BUKAN cuma dari lensa —
+  // supaya tinggi wrapper di jalur normal (tempat teks peringatan mengalir di
+  // bawahnya) selalu cukup menampung artwork yang meluber; kalau tingginya
+  // cuma ikut kotak lensa, artwork yang lebih tinggi akan menutupi teks
+  // peringatannya sendiri (terverifikasi: itulah yang terjadi pada percobaan
+  // pertama sebelum bidang gabungan ini dipakai).
+  // Saat artwork muat (w<=f.w dan h<=f.h): maxW=f.w, maxH=f.h, jadi lensa selalu
+  // 100% dan artwork w/f.w×100% — persis seperti sebelum perbaikan ini, tak ada
+  // regresi di jalur normal.
+  const maxW = Math.max(f.w, w), maxH = Math.max(f.h, h);
   const isi = d.after
     ? '<img src="' + escapeHtml(d.after) + '" style="width:100%;height:100%;object-fit:fill">'
     : '<div class="jejak"></div>';       // DXF: tidak ada gambar, hanya jejak-kaki
   // f.nama berasal dari daftar lensa yang diketik operator — wajib escapeHtml juga di sini.
-  return '<div class="field-box' + (lewat ? ' lewat' : '') + '" '
-       + 'style="aspect-ratio:' + f.w + '/' + f.h + '">'
-       + '<div class="artwork" style="width:' + Math.min(100, w / f.w * 100) + '%;'
-       + 'height:' + Math.min(100, h / f.h * 100) + '%">' + isi + '</div></div>'
+  return '<div class="field-stage" style="aspect-ratio:' + maxW + '/' + maxH + '">'
+       + '<div class="artwork" style="width:' + (w / maxW * 100) + '%;'
+       + 'height:' + (h / maxH * 100) + '%">' + isi + '</div>'
+       + '<div class="field-box' + (lewat ? ' lewat' : '') + '" '
+       + 'style="width:' + (f.w / maxW * 100) + '%;height:' + (f.h / maxH * 100) + '%"></div>'
+       + '</div>'
        + (lewat ? '<div class="warn">⚠ Lebih besar dari area kerja ' + escapeHtml(f.nama)
                 + ' (' + f.w + ' × ' + f.h + ' mm).</div>' : '');
 }
