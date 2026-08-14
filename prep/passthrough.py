@@ -20,9 +20,20 @@ from .geometry import Polyline, _bbox, fit_polylines, rotate_polylines, write_dx
 
 PLT_UNIT_MM = 0.025          # 1 satuan plotter HPGL = 0.025 mm (40 satuan/mm)
 
-# $INSUNITS DXF -> faktor ke mm. Kunci yang tidak ada di sini diperlakukan
-# seperti 0 (tanpa satuan): angkanya dipakai apa adanya, disertai peringatan.
-_INSUNITS_MM = {1: 25.4, 2: 304.8, 4: 1.0, 5: 10.0, 6: 1000.0, 13: 0.001, 14: 100.0}
+# $INSUNITS DXF -> faktor ke mm. Kunci yang tidak ada di sini adalah satuan yang
+# ALAT INI tidak kenali (bukan berarti berkasnya tak menyatakan satuan) —
+# angkanya dipakai apa adanya, disertai peringatan yang membedakan dua kasus itu.
+_INSUNITS_MM = {
+    1: 25.4,      # inci
+    2: 304.8,     # kaki
+    4: 1.0,       # mm
+    5: 10.0,      # cm
+    6: 1000.0,    # meter
+    9: 0.0254,    # mil (seperseribu inci)
+    10: 914.4,    # yard
+    13: 0.001,    # mikron
+    14: 100.0,    # desimeter
+}
 
 # HPGL: dua huruf perintah lalu parameternya sampai huruf berikutnya atau ';'.
 _HPGL_CMD = re.compile(r"([A-Za-z]{2})([^A-Za-z;]*)")
@@ -55,6 +66,20 @@ def plt_to_polylines(path: str) -> List[Polyline]:
             raise ValueError(
                 "File PLT memakai koordinat relatif (PR) — belum didukung. "
                 "Ekspor ulang dari sumbernya dengan koordinat absolut, atau kirim DXF."
+            )
+        if c == "SC":
+            raise ValueError(
+                "File PLT memakai SC (Scale) — perintah ini memetakan ulang unit "
+                "pengguna ke unit plotter, jadi koordinat di berkas ini TIDAK bisa "
+                "dibaca langsung sebagai satuan plotter tanpa salah ukuran. Belum "
+                "didukung. Ekspor ulang dari sumbernya tanpa SC, atau kirim DXF."
+            )
+        if c == "IP":
+            raise ValueError(
+                "File PLT memakai IP (Input P1/P2) — perintah ini menggeser titik "
+                "acuan koordinat plotter, jadi ukuran yang terbaca bisa salah tanpa "
+                "peringatan. Belum didukung. Ekspor ulang dari sumbernya tanpa IP, "
+                "atau kirim DXF."
             )
         if c not in ("PU", "PD", "PA"):
             continue
@@ -98,6 +123,34 @@ def _dxf_extents(doc) -> Tuple[float, float, float, float]:
     return kotak.extmin.x, kotak.extmin.y, kotak.extmax.x, kotak.extmax.y
 
 
+def _cek_log_transform(log: "ezdxf.transform.Logger") -> None:
+    """ezdxf.transform (z_rotate/scale_uniform/translate) TIDAK melempar galat
+    untuk entitas yang gagal ditransformasi -- ia mencatatnya ke Logger dan
+    membiarkan entitas itu apa adanya, dokumentasinya eksplisit soal ini. Diam-
+    diam salah (geometri campur skala, sebagian belum diputar) jauh lebih mahal
+    daripada berhenti -- sikap yang sama sudah dipakai untuk PLT ber-PR."""
+    if len(log):
+        raise ValueError(
+            f"{len(log)} entitas dalam file DXF ini tidak bisa diputar/diskalakan/"
+            "dipindah (kemungkinan objek yang tidak didukung, mis. OLE atau "
+            "proxy). Buka di CAD lain untuk membersihkannya, lalu kirim ulang."
+        )
+
+
+def _read_dxf(path: str):
+    """ezdxf.readfile, tapi galatnya diterjemahkan: pesan asli berbahasa Inggris
+    dan memuat path absolut di dalam container (termasuk id sesi) -- keduanya
+    tak berguna buat operator dan yang kedua bocor info internal ke layar."""
+    try:
+        return ezdxf.readfile(path)
+    except Exception as e:
+        raise ValueError(
+            "File DXF tidak bisa dibaca — kemungkinan rusak, atau sebenarnya "
+            "bukan DXF (mis. .dwg yang diganti nama jadi .dxf). Ekspor ulang "
+            "dari sumbernya, atau minta pelanggan mengirim ulang."
+        ) from e
+
+
 def read_size(path: str) -> Tuple[float, float, List[str]]:
     """(lebar_mm, tinggi_mm, warnings) untuk berkas .dxf atau .plt."""
     ext = os.path.splitext(path)[1].lower()
@@ -109,17 +162,27 @@ def read_size(path: str) -> Tuple[float, float, List[str]]:
         return box[2] - box[0], box[3] - box[1], []
 
     if ext == ".dxf":
-        doc = ezdxf.readfile(path)
+        doc = _read_dxf(path)
         x0, y0, x1, y1 = _dxf_extents(doc)
         insunits = int(doc.header.get("$INSUNITS", 0) or 0)
         faktor = _INSUNITS_MM.get(insunits)
         warnings: List[str] = []
         if faktor is None:
             faktor = 1.0
-            warnings.append(
-                "File DXF tidak menyatakan satuannya ($INSUNITS=0) — ukuran di atas "
-                "dianggap milimeter. Periksa di EZCAD2 bila terasa janggal."
-            )
+            if insunits == 0:
+                # $INSUNITS=0: berkas MEMANG tidak menyatakan satuannya sama sekali.
+                warnings.append(
+                    "File DXF tidak menyatakan satuannya ($INSUNITS=0) — ukuran di atas "
+                    "dianggap milimeter. Periksa di EZCAD2 bila terasa janggal."
+                )
+            else:
+                # $INSUNITS != 0: berkas MENYATAKAN satuannya dengan jelas, alat
+                # ini saja yang belum mengenali kode itu -- jangan menuduh berkasnya.
+                warnings.append(
+                    f"File DXF menyatakan satuan $INSUNITS={insunits}, tapi alat ini "
+                    "belum mengenali kode satuan itu — ukuran di atas dianggap milimeter "
+                    "apa adanya (bisa jauh meleset). Periksa di EZCAD2 bila terasa janggal."
+                )
         return (x1 - x0) * faktor, (y1 - y0) * faktor, warnings
 
     raise ValueError(f"Format {ext} bukan DXF/PLT.")
@@ -157,7 +220,7 @@ def scale_to_dxf(
     # untuk DXF.
     # ponytail: kalau pratinjau DXF nanti diperlukan, ratakan dengan ezdxf.path
     # KHUSUS untuk pratinjau, jangan untuk berkas keluarannya.
-    doc = ezdxf.readfile(src_path)
+    doc = _read_dxf(src_path)
     # list(...) bukan modelspace-nya langsung: helper ezdxf.transform menerima
     # Iterable[DXFEntity], dan daftar konkret menghilangkan pertanyaan apakah
     # iterasi tetap sah sementara entitasnya sedang diubah.
@@ -166,7 +229,7 @@ def scale_to_dxf(
     if rotate in (90, 180, 270):
         # ezdxf memutar berlawanan jarum jam untuk sudut positif; kita ingin
         # searah jarum jam, arah yang sama dengan rotate_polylines dan cv2.rotate.
-        ezdxf.transform.z_rotate(msp, -math.radians(rotate))
+        _cek_log_transform(ezdxf.transform.z_rotate(msp, -math.radians(rotate)))
 
     x0, y0, x1, y1 = _dxf_extents(doc)
     src_w, src_h = x1 - x0, y1 - y0
@@ -178,14 +241,22 @@ def scale_to_dxf(
     faktor = target_width_mm / src_w
     if target_height_mm:
         faktor = min(faktor, target_height_mm / src_h)
-    ezdxf.transform.scale_uniform(msp, faktor)
+    _cek_log_transform(ezdxf.transform.scale_uniform(msp, faktor))
 
     x0, y0, x1, y1 = _dxf_extents(doc)
-    ezdxf.transform.translate(msp, (-(x0 + x1) / 2, -(y0 + y1) / 2, 0))
+    _cek_log_transform(
+        ezdxf.transform.translate(msp, (-(x0 + x1) / 2, -(y0 + y1) / 2, 0))
+    )
 
     doc.units = ezunits.MM
     doc.saveas(out_path)
-    return src_w * faktor, src_h * faktor
+
+    # Ukuran yang dilaporkan diukur ULANG dari bbox berkas yang benar-benar
+    # ditulis, bukan dihitung dari src_w * faktor -- kalau ada entitas yang
+    # gagal ditransformasi (ditangkap di atas) atau perilaku transform berubah,
+    # angka yang sampai ke operator tetap sesuai isi berkas, bukan asumsi.
+    x0, y0, x1, y1 = _dxf_extents(doc)
+    return x1 - x0, y1 - y0
 
 
 if __name__ == "__main__":
@@ -212,6 +283,30 @@ if __name__ == "__main__":
             assert "relatif" in str(e).lower(), str(e)
         else:
             raise AssertionError("PLT dengan PR seharusnya menaikkan galat")
+
+        # SC (Scale) memetakan ulang unit pengguna ke unit plotter -- diabaikan
+        # diam-diam, koordinatnya salah tanpa peringatan. Harus BERHENTI, sama
+        # seperti PR.
+        sc = os.path.join(d, "sc.plt")
+        with open(sc, "w") as f:
+            f.write("IN;SC0,100,0,100;PU0,0;PD100,100;")
+        try:
+            read_size(sc)
+        except ValueError as e:
+            assert "sc" in str(e).lower(), str(e)
+        else:
+            raise AssertionError("PLT dengan SC seharusnya menaikkan galat")
+
+        # IP (Input P1/P2) menggeser titik acuan koordinat -- sama bahayanya.
+        ip = os.path.join(d, "ip.plt")
+        with open(ip, "w") as f:
+            f.write("IN;IP500,500,5500,5500;PU0,0;PD100,100;")
+        try:
+            read_size(ip)
+        except ValueError as e:
+            assert "ip" in str(e).lower(), str(e)
+        else:
+            raise AssertionError("PLT dengan IP seharusnya menaikkan galat")
 
         # PLT tanpa garis sama sekali = galat, bukan 0 x 0
         kosong = os.path.join(d, "k.plt")
@@ -255,6 +350,60 @@ if __name__ == "__main__":
         w, h, warn = read_size(dxf_u)
         assert abs(w - 10.0) < 1e-6 and abs(h - 4.0) < 1e-6, (w, h)
         assert warn and "satuan" in warn[0].lower(), warn
+        assert "tidak menyatakan" in warn[0].lower(), warn  # $INSUNITS=0: berkas MEMANG tak menyatakan
+
+        # --- DXF dalam mil ($INSUNITS=9): berkas MENYATAKAN satuannya dengan
+        # jelas -- tanpa dukungan mil, ukuran akan meleset ~39x (0.0254 vs 1.0).
+        # Sama seperti kasus inci: tanpa warning, karena satuannya DIKENALI.
+        doc_mil = ezdxf.new("R2010")
+        doc_mil.header["$INSUNITS"] = 9
+        doc_mil.modelspace().add_lwpolyline([(0, 0), (2000, 0), (2000, 1000), (0, 1000)], close=True)
+        dxf_mil = os.path.join(d, "mil.dxf")
+        doc_mil.saveas(dxf_mil)
+        w, h, warn = read_size(dxf_mil)
+        assert abs(w - 50.8) < 1e-6 and abs(h - 25.4) < 1e-6, (w, h)
+        assert warn == [], warn
+
+        # --- DXF dengan $INSUNITS dikenal DXF tapi tak dikenal ALAT INI (mis. 3
+        # = mil per spec DXF lama / satuan lain di luar tabel kita). Pesannya
+        # WAJIB menyebut kode aslinya dan bilang "belum mengenali", BUKAN
+        # "tidak menyatakan" -- berkasnya sudah jujur soal satuan, alat yang
+        # kurang tahu.
+        doc_x = ezdxf.new("R2010")
+        doc_x.header["$INSUNITS"] = 3
+        doc_x.modelspace().add_lwpolyline([(0, 0), (10, 0), (10, 4), (0, 4)], close=True)
+        dxf_x = os.path.join(d, "x.dxf")
+        doc_x.saveas(dxf_x)
+        w, h, warn = read_size(dxf_x)
+        assert abs(w - 10.0) < 1e-6 and abs(h - 4.0) < 1e-6, (w, h)
+        assert warn, "satuan tak dikenal seharusnya tetap memberi peringatan"
+        assert "$insunits=3" in warn[0].lower(), warn
+        assert "belum mengenali" in warn[0].lower(), warn
+        assert "tidak menyatakan" not in warn[0].lower(), (
+            "berkas ber-$INSUNITS=3 MENYATAKAN satuannya -- jangan bilang ia tak menyatakan apa-apa: "
+            + warn[0]
+        )
+
+        # --- DXF rusak (bukan DXF sama sekali): pesan galat wajib Indonesia,
+        # tanpa path absolut container di dalamnya.
+        rusak = os.path.join(d, "rusak.dxf")
+        with open(rusak, "w") as f:
+            f.write("ini bukan DXF sama sekali, cuma teks biasa")
+        try:
+            read_size(rusak)
+        except ValueError as e:
+            pesan = str(e)
+            assert rusak not in pesan, f"pesan galat membocorkan path internal: {pesan}"
+            assert "/" not in pesan, f"pesan galat memuat path: {pesan}"
+            assert "dxf" in pesan.lower(), pesan
+        else:
+            raise AssertionError("DXF rusak seharusnya menaikkan ValueError")
+        try:
+            scale_to_dxf(rusak, os.path.join(d, "rusak_out.dxf"), target_width_mm=40.0)
+        except ValueError as e:
+            assert rusak not in str(e), f"pesan galat membocorkan path internal: {e}"
+        else:
+            raise AssertionError("scale_to_dxf atas DXF rusak seharusnya menaikkan ValueError")
 
         # --- Penskalaan: lebar jadi 60 mm, dan hasilnya terpusat di (0,0) ---
         out = os.path.join(d, "out.dxf")
@@ -330,5 +479,26 @@ if __name__ == "__main__":
         msp_arc = ezdxf.readfile(out_arc).modelspace()
         assert len(list(msp_arc.query("ARC"))) == 1, "ARC harus tetap ARC, bukan diratakan"
         assert len(list(msp_arc.query("LWPOLYLINE"))) == 0, "ARC tidak boleh berubah jadi LWPOLYLINE"
+
+        # --- Entitas yang gagal ditransformasi (ezdxf.transform TIDAK melempar
+        # galat untuknya, cuma mencatat ke Logger) harus menghentikan
+        # scale_to_dxf, bukan lolos diam-diam dengan geometri campur skala.
+        # OLE2FRAME dipakai sebagai entitas nyata yang transform()-nya memang
+        # NotImplementedError di ezdxf 1.4.4 (diverifikasi lewat probe).
+        doc_ole = ezdxf.new("R2010")
+        doc_ole.units = ezunits.MM
+        doc_ole.modelspace().add_lwpolyline([(0, 0), (10, 0), (10, 10), (0, 10)], close=True)
+        doc_ole.modelspace().new_entity("OLE2FRAME", dxfattribs={})
+        dxf_ole = os.path.join(d, "ole.dxf")
+        doc_ole.saveas(dxf_ole)
+        try:
+            scale_to_dxf(dxf_ole, os.path.join(d, "ole_out.dxf"), target_width_mm=40.0)
+        except ValueError as e:
+            assert "transformasi" in str(e).lower() or "diputar" in str(e).lower(), str(e)
+        else:
+            raise AssertionError(
+                "DXF dengan entitas yang gagal ditransformasi (OLE2FRAME) "
+                "seharusnya menaikkan ValueError, bukan lolos diam-diam"
+            )
 
     print("ok")

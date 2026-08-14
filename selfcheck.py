@@ -344,6 +344,27 @@ def check_frame_drop_density() -> None:
     assert n >= 200, f"kontur terbesar cuma {n} titik — lingkaran 40 mm jadi poligon kasar"
 
 
+def check_rotate_density() -> None:
+    """Kepadatan titik pasca-putar: keputusan "perbesar lalu sampling ulang" harus
+    memakai sisi yang benar-benar jadi LEBAR setelah rotate_polylines, bukan lebar
+    sebelum diputar. Elips lanskap ~7:1: lebar pra-putar sudah ~pas target (tak
+    perlu sampling ulang), tapi setelah diputar 90° yang jadi lebar adalah sisi
+    PENDEKnya -- fit_polylines membesarkannya besar-besaran. Kalau keputusan
+    sampling-ulang tetap memakai lebar pra-putar, pembesaran itu terjadi TANPA
+    titik tambahan (poligon kasar) -- persis kelas kegagalan yang sudah ditutup
+    check_frame_drop_density, dibuka lagi oleh task Putar."""
+    img = np.full((900, 900), 255, np.uint8)
+    cv2.ellipse(img, (450, 450), (400, 60), 0, 0, 360, 0, -1)
+    d = _call(file=_upload("e.png", _png_bytes(img)), job="vector", width_mm=40.0, rotate=90)
+    assert d["ok"], d
+    doc = ezdxf.readfile(_out_path(d["downloads"][0]["url"]))
+    n = max(len(e.get_points("xy")) for e in doc.modelspace().query("LWPOLYLINE"))
+    assert n >= 1000, (
+        f"kontur terbesar cuma {n} titik setelah putar 90° -- elips lanskap jadi "
+        "poligon kasar (perbesaran dihitung dari sisi sebelum diputar, bukan sesudah)"
+    )
+
+
 def check_batch_reset() -> None:
     """File kedua dalam batch (reset=False) tidak boleh menghapus hasil file pertama."""
     arr = np.full((100, 100), 60, np.uint8)
@@ -431,6 +452,12 @@ def check_dxf_size() -> None:
     assert abs(w - 30.0) < 0.05 and abs(h - 12.0) < 0.05, d2["size_mm"]
     # tanpa diminta, berkas TIDAK boleh diskalakan
     assert d2["downloads"][0]["url"].endswith(".dxf"), d2["downloads"]
+    # mirror=False (default _call) -> TIDAK boleh ada peringatan cermin sama
+    # sekali. Tanpa assert negatif ini, peringatan cermin bisa saja muncul
+    # terus-menerus (bug kebalikannya) tanpa ada cek yang menangkapnya.
+    assert not any("cermin" in x.lower() for x in d2["warnings"]), (
+        f"peringatan cermin seharusnya TIDAK muncul saat mirror=False: {d2['warnings']}"
+    )
 
     # Cermin diminta TANPA menekan skalakan: cermin tetap tidak diterapkan
     # (berkas tetap apa adanya), tapi operator wajib diberi tahu — bukan
@@ -447,6 +474,27 @@ def check_dxf_size() -> None:
     assert any("cermin" in w.lower() for w in d3["warnings"]), (
         "mirror diminta tanpa skala harus memunculkan peringatan eksplisit: "
         f"{d3['warnings']}"
+    )
+
+    # Putaran diminta TANPA menekan skalakan: putaran tidak diterapkan (berkas
+    # tetap apa adanya, app.py:235-239), tapi operator wajib diberi tahu --
+    # nilai yang dipatok spec, belum ada penjaganya sebelum ini.
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "r.dxf")
+        _tulis_dxf(p, 30.0, 12.0)
+        with open(p, "rb") as f:
+            buf = io.BytesIO(f.read())
+    d4 = _call(file=_upload("r.dxf", buf), job="vector", width_mm=40.0,
+               rotate=90, scale_passthrough=False)
+    assert d4["ok"], d4
+    assert d4["passthrough"] is True, d4
+    assert any("putaran" in w.lower() for w in d4["warnings"]), (
+        "putaran diminta tanpa skala harus memunculkan peringatan eksplisit: "
+        f"{d4['warnings']}"
+    )
+    # rotate=0 (default) -> TIDAK boleh ada peringatan putaran sama sekali.
+    assert not any("putaran" in x.lower() for x in d2["warnings"]), (
+        f"peringatan putaran seharusnya TIDAK muncul saat rotate=0: {d2['warnings']}"
     )
 
 
@@ -496,6 +544,7 @@ if __name__ == "__main__":
         check_rotate_mirror_order()
         check_rotate_vector()
         check_rotate_svg()
+        check_rotate_density()
         check_batch_reset()
         check_batch_budget()
         check_zip()

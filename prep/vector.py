@@ -185,9 +185,17 @@ def process_raster_logo(
     # fit_polylines menaikkan koordinat TANPA menambah titik — lingkaran 40 mm bisa
     # keluar sebagai poligon 35 sisi. Jadi bila pembesarannya besar, ulangi sampling
     # pada skala yang benar. Sekali ulang, bukan gelung: pass kedua sudah pas.
+    #
+    # Sisi yang dipakai untuk menghitung "perbesaran" WAJIB sisi yang nanti jadi
+    # LEBAR di fit_polylines -- dan fit_polylines bekerja SESUDAH rotate_polylines
+    # (di bawah). Untuk putaran 90°/270°, sisi yang menentukan skala akhir adalah
+    # TINGGI subjek saat ini, bukan lebarnya (keduanya tertukar oleh rotasi).
+    # Memakai lebar pra-putar di sini membuat perbesaran nyata pada 90°/270°
+    # lolos tanpa sampling ulang -- persis kelas kegagalan yang harusnya sudah
+    # ditutup lewat blok ini.
     box = _bbox(polylines)
     if box is not None:
-        w_sub = box[2] - box[0]
+        w_sub = (box[3] - box[1]) if rotate in (90, 270) else (box[2] - box[0])
         if w_sub > 0:
             perbesaran = target_width_mm / w_sub
             if perbesaran > 1.5:
