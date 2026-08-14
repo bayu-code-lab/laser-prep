@@ -102,7 +102,7 @@
 
     <div class="drop" id="drop">
       <div><b>Klik / seret file ke sini</b></div>
-      <div class="hint" id="dropinfo">Vektor: JPG, PNG, SVG, DXF · Grayscale: JPG, PNG, TIFF</div>
+      <div class="hint" id="dropinfo">Vektor: JPG, PNG, SVG, DXF, PLT · Grayscale: JPG, PNG, TIFF</div>
     </div>
     <input type="file" id="file" multiple hidden />
 
@@ -207,7 +207,7 @@ function pilihMode(j){
   $("#opts-vector").style.display = job==="vector"?"block":"none";
   $("#opts-grayscale").style.display = job==="grayscale"?"block":"none";
   $("#dropinfo").textContent = job==="vector"
-    ? "Vektor: JPG, PNG, SVG, DXF" : "Grayscale: JPG, PNG, TIFF";
+    ? "Vektor: JPG, PNG, SVG, DXF, PLT" : "Grayscale: JPG, PNG, TIFF";
 }
 document.querySelectorAll("#jobseg button").forEach(b=>{
   b.onclick=()=>pilihMode(b.dataset.job);
@@ -257,11 +257,17 @@ const FIELD_KEY = "lp_fields", FIELD_SEL = "lp_field_sel";
 const FIELD_AWAL = [{ nama: "F110", w: 70, h: 70 }, { nama: "F163", w: 110, h: 110 }];
 // Sama seperti ambilPreset(): tangkap JSON rusak, dan tolak juga bentuk yang salah
 // (mis. angka atau array kosong) — keduanya jatuh kembali ke FIELD_AWAL supaya alat
-// tetap hidup dengan setelan bawaan, bukan mati total.
+// tetap hidup dengan setelan bawaan, bukan mati total. Filter per-elemen wajib juga:
+// array-nya sendiri bisa valid tapi berisi sisa bentuk lama (lp_fields versi lawas
+// tanpa w/h numerik) — satu elemen cacat lolos ke sini berarti aspect-ratio:NaN/NaN
+// dan tata letak kotak area kerja rusak di kotakField().
 const ambilField = () => {
   try {
     const a = JSON.parse(localStorage.getItem(FIELD_KEY) || "null");
-    return (Array.isArray(a) && a.length) ? a : FIELD_AWAL;
+    const bersih = Array.isArray(a)
+      ? a.filter(f => f && f.nama && f.w > 0 && f.h > 0)
+      : [];
+    return bersih.length ? bersih : FIELD_AWAL;
   } catch { return FIELD_AWAL; }
 };
 const simpanField = a => localStorage.setItem(FIELD_KEY, JSON.stringify(a));
@@ -372,6 +378,20 @@ function bacaSetelanKeFormData() {
   return fd;
 }
 
+// Satu jalur untuk memanggil /process dipakai gelung batch DAN tombol
+// "Skalakan" — sebelum ini keduanya menduplikasi try/catch yang sama persis,
+// dan itu cara paling gampang satu jalur ketinggalan saat baris respons
+// (mis. jatuh ke d.detail) diperbaiki di jalur yang satu lagi tapi lupa di
+// jalur lainnya.
+async function kirimProses(fd) {
+  try {
+    const res = await fetch("/process", { method: "POST", body: fd });
+    return await res.json();
+  } catch (err) {
+    return { ok: false, error: "Gagal menghubungi server: " + err };
+  }
+}
+
 $("#go").onclick = async () => {
   if (!picked.length) return;
   const btn = $("#go"); btn.disabled = true;
@@ -383,13 +403,7 @@ $("#go").onclick = async () => {
     const fd = bacaSetelanKeFormData();       // dipakai bersama; lihat Task 9
     fd.append("file", picked[i]);
     fd.append("reset", i === 0);              // hanya file pertama mengosongkan folder sesi
-    let data;
-    try {
-      const res = await fetch("/process", { method: "POST", body: fd });
-      data = await res.json();
-    } catch (err) {
-      data = { ok: false, error: "Gagal menghubungi server: " + err };
-    }
+    const data = await kirimProses(fd);
     // Satu file gagal TIDAK menghentikan batch — barisnya merah, sisanya lanjut.
     $("#result").insertAdjacentHTML("beforeend", renderRow(data, picked[i].name));
     if (data.ok) sukses++;
@@ -455,7 +469,7 @@ function renderRow(d, namaFile) {
   let html = '<div class="row-hasil" data-nama="' + namaAman + '">';
   html += '<div class="row-judul">' + namaAman + '</div>';
   if (!d.ok) {
-    return html + '<div class="err">Error: ' + escapeHtml(d.error || "tidak diketahui") + '</div></div>';
+    return html + '<div class="err">Error: ' + escapeHtml(d.error || d.detail || "tidak diketahui") + '</div></div>';
   }
   if (d.size_mm) {
     html += '<div class="previews">';
@@ -523,12 +537,7 @@ $("#result").addEventListener("click", async e => {
     fd.append("file", berkas);
     fd.append("scale_passthrough", "true");
     fd.append("reset", "false");           // jangan menghapus hasil batch lainnya
-    let data;
-    try {
-      data = await (await fetch("/process", { method: "POST", body: fd })).json();
-    } catch (err) {
-      data = { ok: false, error: "Gagal menghubungi server: " + err };
-    }
+    const data = await kirimProses(fd);
     baris.outerHTML = renderRow(data, nama);
     segarkanHasilNama();     // nama hasil berubah jadi …_scaled.dxf
     return;
