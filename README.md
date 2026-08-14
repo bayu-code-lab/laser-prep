@@ -138,8 +138,9 @@ kerja lensa laser yang sedang dipilih, dengan hasil ukiran digambar **di dalamny
 skala sebenarnya** — jadi pertanyaan "muat tidak di lensa ini" terjawab di layar,
 sebelum berkasnya masuk EZCAD2/mesin.
 
-- Daftar **lensa** ada di panel setelan dan bisa **ditambah/dihapus** sendiri (mis. kalau
-  toko punya lensa lain, ketik nama dan ukurannya). Isi awalnya:
+- Daftar **lensa** ada di panel setelan (dropdown **Area kerja (lensa)**), dengan tombol
+  **"＋"** (tambah — ketik nama dan ukurannya) dan **"−"** (hapus yang sedang dipilih) di
+  sampingnya. Isi awalnya:
   - **F110** — 70 × 70 mm
   - **F163** — 110 × 110 mm
 - Hasil yang **melebihi** kotak lensa membuat kotaknya berubah jadi **garis merah**
