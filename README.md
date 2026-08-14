@@ -32,6 +32,10 @@ Alat ini menghasilkan file **import-ready**, BUKAN **mark-ready**. Artinya:
 | **Ke Vektor (DXF)** | Ukiran garis / kontur | JPG, PNG, SVG, (DXF/PLT passthrough) | **DXF** (mm) + SVG | Bersihkan bitmap, vektorisasi (vtracer), buang speckle, skala mm presisi |
 | **Ke Grayscale (PNG)** | Ukiran bernada abu-abu | JPG, PNG, TIFF | **PNG grayscale** (DPI benar) | Grayscale, auto-trim, auto-kontras/CLAHE, gamma, skala fisik mm @ DPI |
 
+> DXF/PLT masuk sebagai **passthrough** (bukan divektorisasi ulang) — lihat bagian
+> **DXF/PLT: ukuran dilaporkan, bukan diubah diam-diam** di bawah untuk detail perilaku
+> dan batasannya.
+
 ---
 
 ## Instalasi (Windows — komputer dekat mesin laser)
@@ -61,13 +65,18 @@ Buka browser ke **http://127.0.0.1:8000** . Selesai — semua jalan lokal, tanpa
 ## Cara pakai
 
 1. Pilih **mode** (Ke Vektor (DXF), atau Ke Grayscale (PNG)).
-2. **Seret file** pelanggan ke kotak upload.
+2. **Seret file** pelanggan ke kotak upload — satu berkas, atau beberapa sekaligus untuk
+   diproses sebagai **batch** (lihat bagian **Batch** di bawah).
 3. Isi **Lebar target (mm)** — ukuran fisik hasil ukiran. Isi **Tinggi maks (mm)** bila
    hasilnya harus muat di area tertentu; kosongkan bila tinggi boleh ikut rasio.
-4. Atur opsi bila perlu (threshold, invert, cermin, speckle / DPI, kontras, gamma,
-   auto-trim).
-5. Tekan **Proses**, cek **preview sesudah**. Kurang pas? Ubah opsi, proses lagi.
-6. **Download** hasilnya (DXF untuk mode Vektor, PNG untuk mode Grayscale).
+4. Atur opsi bila perlu (threshold, invert, cermin, **putar 0°/90°/180°/270°**, speckle /
+   DPI, kontras, gamma, auto-trim, **lensa** area kerja untuk cek muat). Kalau setelan ini
+   sering dipakai ulang, simpan sebagai **preset** (lihat bagian **Preset** di bawah).
+5. Tekan **Proses**, cek **preview sesudah** — termasuk kotak area kerja lensa yang
+   menunjukkan muat atau tidaknya hasil. Kurang pas? Ubah opsi, proses lagi.
+6. **Download** hasilnya (DXF untuk mode Vektor, PNG untuk mode Grayscale). Kalau
+   memproses batch dan hasil suksesnya lebih dari satu, ada tombol **"⬇ Unduh semua
+   (ZIP)"** untuk mengambil semuanya sekaligus.
 
 ### Import ke EZCAD2
 
@@ -84,6 +93,95 @@ Buka browser ke **http://127.0.0.1:8000** . Selesai — semua jalan lokal, tanpa
 2. Set ukuran (mm). Di properti bitmap, aktifkan **grayscale / dithering** bawaan EZCAD2
    sesuai selera (di sinilah EZCAD2 unggul).
 3. Set pen parameter sesuai material kaca. Mark.
+
+---
+
+## Batch (banyak berkas sekaligus)
+
+Kamu bisa **seret beberapa berkas sekaligus** ke kotak upload (atau pilih banyak lewat
+dialog file browser). Cocok untuk hari-hari banyak orderan yang mode dan setelannya sama.
+
+- **Satu set setelan berlaku untuk seluruh batch** — tidak ada setelan per berkas.
+  Kelompokkan dulu berkas yang memang butuh threshold/lensa/dll. yang sama sebelum
+  memprosesnya bareng; yang beda setelan, proses sebagai batch terpisah.
+- Berkas diproses **berurutan** dengan progres di layar, mis. "Memproses 5 dari 12…".
+- Tiap berkas mendapat **satu baris hasil**. Berkas yang gagal tampil sebagai **baris
+  merah** berisi pesan errornya, dan batch **tetap lanjut** ke berkas berikutnya — satu
+  berkas rusak tidak menggagalkan sisanya.
+- Kalau hasil suksesnya lebih dari satu, muncul tombol **"⬇ Unduh semua (ZIP)"**.
+- Ruang hasil satu sesi batch dibatasi **200 MB**. Kalau penuh, berkas berikutnya ditolak
+  dengan pesan yang jelas di layar — **unduh dulu hasil yang sudah ada** (satu-satu atau
+  lewat ZIP), lalu proses sisanya sebagai batch baru.
+
+## Preset (setelan tersimpan)
+
+Setelan yang sering dipakai ulang bisa **disimpan dengan nama** lalu dimuat lagi kapan
+saja lewat dropdown **Preset** di atas panel setelan. Preset merekam **seluruh setelan**,
+termasuk **mode**-nya (Ke Vektor atau Ke Grayscale) — jadi satu klik langsung
+mengembalikan kondisi lengkap, tidak perlu ganti mode dan isi ulang opsi satu-satu.
+
+- **Simpan** memberi nama pada setelan saat ini; **Hapus** membuang preset yang sedang
+  dipilih.
+- Preset tersimpan di **browser kamu** (`localStorage`), **bukan di server laser-prep**.
+  Konsekuensinya:
+  - preset yang dibuat di Chrome **tidak muncul** di Firefox/Edge, dan preset di komputer
+    ini **tidak ikut** kalau alat ini dibuka dari komputer lain — preset itu per-browser,
+    per-mesin;
+  - kalau kamu **bersihkan data situs / cache / cookies browser** ini, semua preset ikut
+    **hilang**. Tidak ada cadangan otomatis di server, jadi catat setelan penting di
+    tempat lain kalau memang krusial.
+
+## Area kerja & cek "muat tidak" (lensa)
+
+Panel **preview sesudah** menggambar **kotak garis putus-putus** yang mewakili area
+kerja lensa laser yang sedang dipilih, dengan hasil ukiran digambar **di dalamnya pada
+skala sebenarnya** — jadi pertanyaan "muat tidak di lensa ini" terjawab di layar,
+sebelum berkasnya masuk EZCAD2/mesin.
+
+- Daftar **lensa** ada di panel setelan (dropdown **Area kerja (lensa)**), dengan tombol
+  **"＋"** (tambah — ketik nama dan ukurannya) dan **"−"** (hapus yang sedang dipilih) di
+  sampingnya. Isi awalnya:
+  - **F110** — 70 × 70 mm
+  - **F163** — 110 × 110 mm
+- Hasil yang **melebihi** kotak lensa membuat kotaknya berubah jadi **garis merah**
+  disertai peringatan di layar — tapi ini **cuma peringatan, tidak pernah memblokir**
+  proses atau unduhan. Keputusan akhir "boleh mark atau tidak" tetap di tanganmu.
+- Tombol dua-keadaan **"pas layar" / "skala area kerja"** di pojok preview dipakai untuk
+  gonta-ganti tampilan:
+  - **"pas layar"** membesarkan hasil supaya penuh di panel — enak untuk cek detail garis.
+  - **"skala area kerja"** menampilkan proporsi asli terhadap kotak lensa — penting
+    supaya, misalnya, logo 5 mm di dalam lensa F163 (110 mm) tidak cuma terlihat sebagai
+    titik yang mutunya tak bisa dinilai dari layar.
+
+## Rotasi (0° / 90° / 180° / 270°)
+
+Tersedia di **kedua mode** (Ke Vektor dan Ke Grayscale), searah **jarum jam** sebagaimana
+terlihat di layar. Rotasi diterapkan **sebelum penskalaan** (dan sebelum cermin) — jadi
+kalau kamu isi **Lebar target 40 mm**, itu selalu lebar hasil akhir **setelah** diputar,
+bukan lebar berkas sebelum diputar. Aman diganti-ganti sambil lihat preview sesudah untuk
+cari orientasi yang pas.
+
+Rotasi (dan cermin) **tidak** diterapkan pada berkas DXF/PLT yang lewat sebagai
+passthrough — lihat bagian berikutnya.
+
+## DXF/PLT: ukuran dilaporkan, bukan diubah diam-diam
+
+Kalau kamu masukkan **DXF atau PLT** ke mode Ke Vektor, alat ini memperlakukannya sebagai
+**passthrough**: ukuran asli berkas **dilaporkan** di baris hasil, dan secara bawaan
+**tidak** diskalakan — berkas yang ukurannya sudah benar tidak dirusak alat ini.
+
+- Mau tetap diskalakan ke **Lebar target (mm)**? Tekan tombol **"Skalakan ke ukuran
+  target"** yang muncul di baris hasil berkas itu. **PLT yang diskalakan keluar sebagai
+  DXF** (bukan PLT lagi).
+- DXF **tanpa keterangan satuan** di headernya dilaporkan sebagai **mm** disertai
+  **peringatan** di layar — cek manual kalau berkasnya berasal dari software yang biasa
+  memakai satuan lain (inch, dsb.), karena alat ini menebak, bukan memastikan.
+- DXF **tidak punya pratinjau gambar** di panel sebelum/sesudah — yang tampil hanya
+  **jejak kotaknya (bounding box)** di dalam kotak area kerja/lensa, supaya kamu tetap
+  bisa cek muat atau tidak walau tidak lihat bentuk aslinya.
+- **Cermin dan rotasi tidak diterapkan** pada berkas passthrough ini — kalau kamu
+  menyalakan opsi itu untuk berkas DXF/PLT yang tidak diskalakan, alat memberi
+  **peringatan** di layar alih-alih diam-diam mengabaikannya.
 
 ---
 
@@ -123,7 +221,8 @@ laser-prep/
 │   ├── __init__.py        # routing ekstensi + ekspor fungsi
 │   ├── geometry.py        # SVG→polyline(mm), tulis DXF, render preview
 │   ├── vector.py          # mode Ke Vektor: raster/SVG → DXF + SVG
-│   └── raster.py          # mode Ke Grayscale: foto → PNG grayscale (skala mm @ DPI)
+│   ├── raster.py          # mode Ke Grayscale: foto → PNG grayscale (skala mm @ DPI)
+│   └── passthrough.py     # DXF/PLT passthrough: baca ukuran, skala opsional ke DXF
 ├── templates/index.html   # UI drag-drop + preview
 ├── samples/               # contoh untuk uji coba
 └── _out/                  # hasil (dibuat otomatis)

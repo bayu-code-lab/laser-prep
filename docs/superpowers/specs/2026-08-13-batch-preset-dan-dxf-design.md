@@ -116,9 +116,10 @@ Tabrakan nama sudah aman lewat `_safe_stem` yang menempelkan 6 hex acak.
 Tidak ada penyimpanan di server.
 
 ```
-lp_presets  = { "<nama>": { job, width_mm, height_mm, rotate, mirror,
-                            auto_threshold, threshold, invert, filter_speckle,
-                            dpi, gamma, autocontrast, clahe, autotrim, remove_bg } }
+lp_presets  = { "<nama>": { job, width_mm, height_mm, rotate,
+                            auto_threshold, threshold, invert, mirror_vector, filter_speckle,
+                            dpi, gamma, autocontrast, clahe, invert_gray, mirror_gray,
+                            autotrim, remove_bg } }
 lp_fields   = [ {"nama":"F110","w":70,"h":70}, {"nama":"F163","w":110,"h":110} ]
 lp_field_sel= "<nama lensa terpilih terakhir>"
 ```

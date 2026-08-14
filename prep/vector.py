@@ -16,7 +16,7 @@ import vtracer
 
 from .geometry import (
     svg_to_polylines_mm, write_dxf, render_preview, Polyline,
-    fit_polylines, mirror_polylines, _bbox,
+    fit_polylines, mirror_polylines, rotate_polylines, _bbox,
 )
 
 
@@ -145,6 +145,7 @@ def process_raster_logo(
     target_width_mm: float = 50.0,
     target_height_mm: float | None = None,
     mirror: bool = False,
+    rotate: int = 0,
     threshold: int = 128,
     auto_threshold: bool = True,
     invert: bool = False,
@@ -184,9 +185,17 @@ def process_raster_logo(
     # fit_polylines menaikkan koordinat TANPA menambah titik — lingkaran 40 mm bisa
     # keluar sebagai poligon 35 sisi. Jadi bila pembesarannya besar, ulangi sampling
     # pada skala yang benar. Sekali ulang, bukan gelung: pass kedua sudah pas.
+    #
+    # Sisi yang dipakai untuk menghitung "perbesaran" WAJIB sisi yang nanti jadi
+    # LEBAR di fit_polylines -- dan fit_polylines bekerja SESUDAH rotate_polylines
+    # (di bawah). Untuk putaran 90°/270°, sisi yang menentukan skala akhir adalah
+    # TINGGI subjek saat ini, bukan lebarnya (keduanya tertukar oleh rotasi).
+    # Memakai lebar pra-putar di sini membuat perbesaran nyata pada 90°/270°
+    # lolos tanpa sampling ulang -- persis kelas kegagalan yang harusnya sudah
+    # ditutup lewat blok ini.
     box = _bbox(polylines)
     if box is not None:
-        w_sub = box[2] - box[0]
+        w_sub = (box[3] - box[1]) if rotate in (90, 270) else (box[2] - box[0])
         if w_sub > 0:
             perbesaran = target_width_mm / w_sub
             if perbesaran > 1.5:
@@ -196,6 +205,12 @@ def process_raster_logo(
                     points_per_mm=points_per_mm,
                 )
                 polylines = _drop_frame_and_speckle(polylines, size2)
+
+    # Putar SEBELUM fit: dengan begitu "lebar target" merujuk lebar hasil AKHIR,
+    # bukan lebar sebelum diputar. Cermin tetap sesudah fit karena
+    # mirror_polylines butuh lebar akhir — urutan efektifnya jadi putar -> cermin,
+    # sama dengan mode Grayscale.
+    polylines = rotate_polylines(polylines, rotate)
 
     # Skala WAJIB dihitung ulang dari kontur yang tersisa. Kalau bingkai penuh-gambar
     # ikut terbuang, skala lama membuat BINGKAI selebar target — subjeknya jadi jauh
@@ -235,6 +250,7 @@ def process_svg_input(
     target_width_mm: float = 50.0,
     target_height_mm: float | None = None,
     mirror: bool = False,
+    rotate: int = 0,
     points_per_mm: float = 4.0,
 ) -> VectorResult:
     os.makedirs(out_dir, exist_ok=True)
@@ -242,12 +258,17 @@ def process_svg_input(
     prev_after = os.path.join(out_dir, f"{stem}_after.png")
 
     warnings: List[str] = []
+    # Sampling memakai target_width_mm supaya kepadatan titiknya kira-kira benar,
+    # tapi ukuran AKHIR ditentukan fit_polylines SESUDAH putaran — kalau target
+    # tinggi diterapkan di sini, ia akan menafsirkan kotak dalam orientasi sebelum
+    # diputar. Alur ini kini sama persis dengan process_raster_logo.
     polylines, size_mm = svg_to_polylines_mm(
         src_path,
         target_width_mm=target_width_mm,
-        target_height_mm=target_height_mm,
         points_per_mm=points_per_mm,
     )
+    polylines = rotate_polylines(polylines, rotate)
+    polylines, size_mm = fit_polylines(polylines, target_width_mm, target_height_mm)
     if not polylines:
         warnings.append("SVG tidak memuat path yang bisa dibaca (mungkin berisi teks/gambar raster).")
 

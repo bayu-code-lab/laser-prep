@@ -13,6 +13,14 @@ import cv2
 import numpy as np
 from PIL import Image
 
+# Putar searah jarum jam sebagaimana terlihat di layar — arah yang sama dipakai
+# rotate_polylines() di prep/geometry.py untuk mode Vektor.
+_CV_ROT = {
+    90: cv2.ROTATE_90_CLOCKWISE,
+    180: cv2.ROTATE_180,
+    270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+}
+
 
 @dataclass
 class RasterResult:
@@ -98,6 +106,7 @@ def process_photo(
     clahe: bool = False,
     invert: bool = False,
     mirror: bool = False,
+    rotate: int = 0,
     gamma: float = 1.0,
 ) -> RasterResult:
     os.makedirs(out_dir, exist_ok=True)
@@ -159,6 +168,12 @@ def process_photo(
 
     if invert:
         gray = cv2.bitwise_not(gray)
+
+    # Putar SEBELUM cermin. Untuk 90°/270° kedua operasi ini tidak komutatif, dan
+    # mode Vektor memakai urutan yang sama (putar -> fit -> cermin). Urutan yang
+    # berbeda antar mode akan memberi dua jawaban untuk setelan yang sama.
+    if int(rotate) in _CV_ROT:
+        gray = cv2.rotate(gray, _CV_ROT[int(rotate)])
 
     if mirror:
         # Kaca sering diukir dari sisi belakang; stempel & cetakan juga perlu tercermin.

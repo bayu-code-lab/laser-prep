@@ -11,13 +11,16 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import tempfile
 import uuid
+import zipfile
 
 import time
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Cookie
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Cookie, Body
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from prep import (
     process_raster_logo,
@@ -26,6 +29,8 @@ from prep import (
     RASTER_EXT,
     VECTOR_EXT,
     PASSTHROUGH_EXT,
+    read_size,
+    scale_to_dxf,
 )
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -34,6 +39,12 @@ os.makedirs(OUT_DIR, exist_ok=True)
 # Detik sejak upload terakhir sebelum folder sesi dihapus. Mtime hanya diperbarui saat
 # upload, bukan saat preview/download — jadi ini juga batas "berapa lama tab boleh nganggur".
 SESSION_TTL = 1800
+# Batas total hasil dalam satu folder sesi. _out adalah tmpfs 256 MB; sisanya
+# headroom supaya batch berhenti dengan pesan yang jelas, bukan dengan
+# "No space left on device" di tengah penulisan berkas.
+BATCH_BUDGET = 200 * 1024 * 1024
+# Nama berkas yang boleh dikemas ke ZIP: basename polos, tanpa pemisah path.
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 app = FastAPI(title="Laser Prep")
 app.mount("/out", StaticFiles(directory=OUT_DIR), name="out")
@@ -62,6 +73,16 @@ def _fresh_session_dir(sid: str) -> str:
     return d
 
 
+def _dir_size(d: str) -> int:
+    """Total byte berkas biasa langsung di dalam d (folder sesi tidak bersarang)."""
+    total = 0
+    for name in os.listdir(d):
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            total += os.path.getsize(p)
+    return total
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     with open(os.path.join(BASE, "templates", "index.html"), encoding="utf-8") as f:
@@ -77,9 +98,12 @@ async def process(
     lp_sid: str = Cookie(default=""),
     file: UploadFile = File(...),
     job: str = Form(...),                 # "vector" | "grayscale"
+    reset: bool = Form(True),             # True = kosongkan folder sesi (file pertama batch)
     width_mm: float = Form(50.0),
     height_mm: float = Form(0.0),          # 0 = tanpa batas tinggi
     mirror: bool = Form(False),
+    rotate: int = Form(0),                # 0 | 90 | 180 | 270
+    scale_passthrough: bool = Form(False),   # DXF/PLT hanya diskalakan bila diminta
     # vektor
     auto_threshold: bool = Form(True),
     threshold: int = Form(128),
@@ -94,8 +118,25 @@ async def process(
     gamma: float = Form(1.0),
 ):
     sid = re.sub(r"[^a-f0-9]", "", lp_sid)[:32] or uuid.uuid4().hex
-    sess_dir = _fresh_session_dir(sid)
+    if reset:
+        sess_dir = _fresh_session_dir(sid)
+    else:
+        # File ke-2 dan seterusnya dalam satu batch menumpang folder yang sama —
+        # mengosongkannya di sini akan memakan hasil file-file sebelumnya.
+        sess_dir = os.path.join(OUT_DIR, sid)
+        os.makedirs(sess_dir, exist_ok=True)
     _gc_sessions()
+
+    if _dir_size(sess_dir) >= BATCH_BUDGET:
+        # Status 200, bukan 500: ini kondisi yang diharapkan, bukan kesalahan
+        # server, dan gelung batch di browser merendernya lewat jalur galat
+        # yang sama dengan galat lain.
+        return JSONResponse({
+            "ok": False,
+            "error": f"Ruang hasil penuh ({BATCH_BUDGET // (1024 * 1024)} MB). "
+                     f"File ini tidak diproses — unduh hasil yang sudah ada, "
+                     f"lalu proses sisanya sebagai batch baru.",
+        })
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     stem = _safe_stem(file.filename or "file")
@@ -115,6 +156,13 @@ async def process(
         height_mm = 0.0
     target_h = height_mm if height_mm > 0 else None
 
+    try:
+        rotate = int(rotate) % 360
+    except Exception:
+        rotate = 0
+    if rotate not in (90, 180, 270):
+        rotate = 0
+
     def url(p: str) -> str:
         return f"/out/{sid}/" + os.path.basename(p)
 
@@ -125,6 +173,7 @@ async def process(
                     src_path, sess_dir, stem,
                     target_width_mm=width_mm, target_height_mm=target_h,
                     mirror=mirror,
+                    rotate=rotate,
                 )
             elif ext in RASTER_EXT:
                 r = process_raster_logo(
@@ -132,19 +181,69 @@ async def process(
                     target_width_mm=width_mm,
                     target_height_mm=target_h,
                     mirror=mirror,
+                    rotate=rotate,
                     auto_threshold=auto_threshold,
                     threshold=int(threshold),
                     invert=invert,
                     filter_speckle=int(filter_speckle),
                 )
             elif ext in PASSTHROUGH_EXT:
-                # file sudah siap import — sajikan yang diunggah, tak perlu salinan kedua
+                # Cermin tidak pernah diterapkan pada berkas DXF/PLT kiriman
+                # pelanggan — baik diskalakan maupun tidak — jadi cek ini satu
+                # tempat saja, dipakai kedua jalur di bawah supaya operator
+                # tidak dapat dua peringatan yang sama.
+                peringatan_mirror = []
+                if mirror:
+                    peringatan_mirror.append(
+                        "Cermin tidak diterapkan pada berkas vektor kiriman ini "
+                        "(DXF/PLT), baik yang diskalakan maupun yang disalin apa "
+                        "adanya. Cermin objeknya di EZCAD2 setelah import."
+                    )
+
+                if scale_passthrough:
+                    out_dxf = os.path.join(sess_dir, f"{stem}_scaled.dxf")
+                    size = scale_to_dxf(
+                        src_path, out_dxf,
+                        target_width_mm=width_mm,
+                        target_height_mm=target_h,
+                        rotate=rotate,
+                    )
+                    peringatan = list(peringatan_mirror)
+                    if ext == ".plt":
+                        peringatan.append(
+                            "PLT yang diskalakan keluar sebagai DXF — EZCAD2 membacanya "
+                            "sama baiknya, dan geometrinya sudah dipusatkan di (0,0)."
+                        )
+                    return JSONResponse({
+                        "ok": True, "job": job, "passthrough": False,
+                        "downloads": [{"label": "DXF terskala (mm)", "url": url(out_dxf)}],
+                        "before": None, "after": None,
+                        "size_mm": [round(size[0], 2), round(size[1], 2)],
+                        "n_paths": None,
+                        "warnings": peringatan,
+                    })
+
+                # Tidak diskalakan: berkas disajikan APA ADANYA — itulah gunanya
+                # passthrough. Yang berubah hanyalah alat kini memberi tahu ukurannya.
+                w_mm, h_mm, peringatan = read_size(src_path)
+                peringatan = list(peringatan) + peringatan_mirror
+                peringatan.append(
+                    f"File {ext.upper().lstrip('.')} disalin apa adanya, ukuran asli "
+                    f"{w_mm:.1f} × {h_mm:.1f} mm. Tekan “Skalakan ke ukuran target” "
+                    f"bila ukurannya perlu diubah."
+                )
+                if rotate:
+                    peringatan.append(
+                        "Putaran diabaikan untuk berkas yang lewat apa adanya. "
+                        "Tekan “Skalakan ke ukuran target” bila putarannya perlu diterapkan."
+                    )
                 return JSONResponse({
                     "ok": True, "job": job, "passthrough": True,
                     "downloads": [{"label": ext.upper().lstrip("."), "url": url(src_path)}],
                     "before": None, "after": None,
-                    "size_mm": None, "n_paths": None,
-                    "warnings": [f"File {ext} sudah vektor/siap import — disalin apa adanya. Set ukuran & parameter di EZCAD2."],
+                    "size_mm": [round(w_mm, 2), round(h_mm, 2)],
+                    "n_paths": None,
+                    "warnings": peringatan,
                 })
             else:
                 raise HTTPException(400, f"Format {ext} tak didukung untuk mode Vektor.")
@@ -174,6 +273,7 @@ async def process(
                 remove_bg=remove_bg, autocontrast=autocontrast, autotrim=autotrim,
                 clahe=clahe, gamma=float(gamma), invert=invert,
                 mirror=mirror,
+                rotate=rotate,
             )
             os.remove(src_path)  # sumber tak dipakai lagi; preview 'before' sudah punya thumbnail sendiri
 
@@ -195,6 +295,59 @@ async def process(
         raise
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/zip")
+def zip_outputs(lp_sid: str = Cookie(default=""), names: list[str] = Body(..., embed=True)):
+    """Kemas berkas hasil pilihan dari folder sesi ini jadi satu ZIP.
+
+    Daftar nama datang dari browser, bukan hasil tebakan atas isi folder:
+    menebak berarti menyaring dengan pola nama (_before.jpg, _after.png), dan
+    pola itu rusak diam-diam begitu ada berkas baru bernama mirip.
+    """
+    sid = re.sub(r"[^a-f0-9]", "", lp_sid)[:32]
+    sess_dir = os.path.join(OUT_DIR, sid)
+    if not sid or not os.path.isdir(sess_dir):
+        raise HTTPException(400, "Sesi tidak ditemukan.")
+
+    paths = []
+    for n in names:
+        # Wajib basename polos DAN benar-benar ada di folder sesi ini. Tanpa ini,
+        # "../app.py" akan mengemas berkas di luar folder sesi.
+        if not n or n in (".", "..") or not _SAFE_NAME.match(n):
+            raise HTTPException(400, f"Nama berkas tidak sah: {n!r}")
+        p = os.path.join(sess_dir, n)
+        if not os.path.isfile(p):
+            raise HTTPException(400, f"Berkas tidak ada di sesi ini: {n}")
+        paths.append(p)
+    if not paths:
+        raise HTTPException(400, "Tidak ada berkas untuk dikemas.")
+
+    # Temp file DI LUAR _out: _out adalah tmpfs 256 MB, dan mengemas hasil di
+    # dalamnya berarti memakai ruang dua kali lipat lalu menjebolnya.
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp.close()
+    try:
+        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as z:
+            for p in paths:
+                z.write(p, arcname=os.path.basename(p))
+    except Exception:
+        # Penulisan gagal di tengah (mis. berkas terhapus GC sesi sebelum sempat
+        # dibaca) -> BackgroundTask tak pernah terpasang, jadi arsip parsial
+        # dibersihkan di sini juga, bukan hanya pada jalur sukses. Galat
+        # penghapusan sendiri diabaikan: kegagalan ASLI yang perlu dilaporkan
+        # adalah galat penulisan ZIP, bukan urusan bersih-bersihnya.
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+        raise
+    return FileResponse(
+        tmp.name,
+        media_type="application/zip",
+        filename=f"laser-prep-{sid[:6]}.zip",
+        background=BackgroundTask(os.remove, tmp.name),
+    )
 
 
 if __name__ == "__main__":

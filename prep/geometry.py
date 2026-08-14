@@ -161,6 +161,28 @@ def mirror_polylines(polylines: List[Polyline], width_mm: float) -> List[Polylin
     return [([(width_mm - x, y) for x, y in pts], closed) for pts, closed in polylines]
 
 
+# Putar searah jarum jam DI LAYAR. Sumbu Y di modul ini ke atas, jadi titik di
+# atas (0, 1) harus mendarat di kanan (1, 0) untuk 90°.
+_ROT = {
+    90: lambda x, y: (y, -x),
+    180: lambda x, y: (-x, -y),
+    270: lambda x, y: (-y, x),
+}
+
+
+def rotate_polylines(polylines: List[Polyline], deg: int) -> List[Polyline]:
+    """Putar polyline 0/90/180/270 derajat searah jarum jam (dilihat di layar).
+
+    Hasilnya sengaja TIDAK dinormalkan ke pojok (0,0) — pemanggil selalu
+    meneruskannya ke fit_polylines, yang memang bertugas menormalkan. Derajat di
+    luar 0/90/180/270 diperlakukan sebagai 0.
+    """
+    f = _ROT.get(int(deg))
+    if f is None:
+        return polylines
+    return [([f(x, y) for x, y in pts], closed) for pts, closed in polylines]
+
+
 def write_dxf(polylines: List[Polyline], out_path: str) -> None:
     """Tulis polyline (mm) ke DXF R2010, satuan milimeter, siap import EZCAD2.
 
@@ -263,5 +285,17 @@ if __name__ == "__main__":
         cy = (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2
         assert abs(cx) < 1e-6 and abs(cy) < 1e-6, f"DXF harus berpusat di (0,0), dapat ({cx}, {cy})"
         write_dxf([], os.path.join(d, "kosong.dxf"))  # daftar kosong tetap sah
+
+    # putar: SEARAH JARUM JAM sebagaimana terlihat di layar.
+    # Koordinat di sini Y-ke-ATAS, jadi "atas" = +y. Garis yang menunjuk ke ATAS
+    # harus menunjuk ke KANAN setelah diputar 90°.
+    up = ([(0.0, 0.0), (0.0, 10.0)], False)
+    assert rotate_polylines([up], 90)[0][0] == [(0.0, 0.0), (10.0, 0.0)]
+    assert rotate_polylines([up], 180)[0][0] == [(0.0, 0.0), (0.0, -10.0)]
+    assert rotate_polylines([up], 270)[0][0] == [(0.0, 0.0), (-10.0, 0.0)]
+    assert rotate_polylines([up], 90)[0][1] is False        # status tertutup terjaga
+    assert rotate_polylines([up], 0) == [up]                # 0 = tanpa perubahan
+    assert rotate_polylines([up], 45) == [up]               # derajat tak sah = 0
+    assert rotate_polylines([], 90) == []
 
     print("ok")

@@ -51,6 +51,30 @@
   .empty{color:var(--muted);font-size:14px;text-align:center;padding:40px 10px}
   .spin{display:inline-block;width:15px;height:15px;border:2px solid #1a0f08;border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes s{to{transform:rotate(360deg)}}
+  .row-hasil{border-top:1px solid var(--line);padding-top:14px;margin-top:14px}
+  .row-hasil:first-child{border-top:none;padding-top:0;margin-top:0}
+  .row-judul{font-size:13px;color:var(--muted);margin-bottom:10px;word-break:break-all}
+  .skala{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:10px 14px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer}
+  .seg-btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:9px 12px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:600;margin-left:6px}
+  .seg-btn:first-child{margin-left:0}
+  /* field-stage = bidang gabungan yang membungkus lensa DAN artwork sekaligus,
+     ukurannya (aspect-ratio) dihitung dari yang TERBESAR di antara keduanya per
+     sisi. Ini yang menjamin tinggi wrapper (jalur normal, tempat teks peringatan
+     ikut mengalir di bawahnya) selalu cukup — kalau tingginya cuma mengikuti
+     kotak lensa (seperti percobaan pertama), artwork yang meluber ke bawah
+     menutupi teks peringatannya sendiri. field-box & artwork sama-sama posisi
+     absolute+transform (bukan flex) supaya tidak ada flex-shrink yang memaksa
+     artwork mengecil kembali ke ukuran kotak.*/
+  .field-stage{position:relative;width:100%;background:#fff;border-radius:8px}
+  .field-stage .artwork{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .field-box{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border:1.5px dashed var(--line);border-radius:8px;background:transparent}
+  .field-box.lewat{border-color:#7a2626}
+  .jejak{width:100%;height:100%;background:repeating-linear-gradient(45deg,#d9dee8,#d9dee8 4px,#fff 4px,#fff 8px);border:1px solid #98a1b3}
+  .row-hasil .tampil-field{width:100%}
+  .row-hasil .tampil-penuh{display:none}
+  .row-hasil.penuh .tampil-field{display:none}
+  .row-hasil.penuh .tampil-penuh{display:block}
+  .pv h3 .pas{float:right;background:var(--panel);border:1px solid var(--line);color:var(--muted);font-size:11px;padding:2px 8px;border-radius:999px;cursor:pointer;text-transform:none;letter-spacing:0}
 </style>
 </head>
 <body>
@@ -62,7 +86,14 @@
 <div class="wrap">
   <!-- KIRI: kontrol -->
   <div class="card">
-    <h2>1 · Mode</h2>
+    <h2>Preset</h2>
+    <div class="row">
+      <div><select id="preset"><option value="">— pilih preset —</option></select></div>
+      <div style="flex:0 0 auto"><button class="seg-btn" id="preset_simpan">Simpan</button>
+      <button class="seg-btn" id="preset_hapus">Hapus</button></div>
+    </div>
+
+    <h2 style="margin-top:18px">1 · Mode</h2>
     <div class="seg" id="jobseg">
       <button data-job="vector" class="active">Ke Vektor<br><small>(DXF)</small></button>
       <button data-job="grayscale">Ke Grayscale<br><small>(PNG)</small></button>
@@ -71,9 +102,9 @@
 
     <div class="drop" id="drop">
       <div><b>Klik / seret file ke sini</b></div>
-      <div class="hint" id="dropinfo">Vektor: JPG, PNG, SVG, DXF · Grayscale: JPG, PNG, TIFF</div>
+      <div class="hint" id="dropinfo">Vektor: JPG, PNG, SVG, DXF, PLT · Grayscale: JPG, PNG, TIFF</div>
     </div>
-    <input type="file" id="file" hidden />
+    <input type="file" id="file" multiple hidden />
 
     <div class="row">
       <div>
@@ -86,6 +117,23 @@
       </div>
     </div>
     <div class="hint">Ukuran fisik hasil ukiran. <b>Tinggi maks kosong</b>: tinggi ikut rasio otomatis. <b>Diisi</b>: gambar dimuatkan ke dalam kotak lebar × tinggi, rasio tetap dijaga.</div>
+
+    <label>Putar</label>
+    <select id="rotate">
+      <option value="0">0° (tanpa putar)</option>
+      <option value="90">90° searah jarum jam</option>
+      <option value="180">180°</option>
+      <option value="270">270° (90° berlawanan jarum jam)</option>
+    </select>
+    <div class="hint">Diterapkan sebelum penskalaan, jadi "lebar target" selalu merujuk lebar hasil akhir. Bila cermin juga menyala, putaran dilakukan lebih dulu.</div>
+
+    <label>Area kerja (lensa)</label>
+    <div class="row">
+      <div><select id="field"></select></div>
+      <div style="flex:0 0 auto"><button class="seg-btn" id="field_tambah">＋</button>
+      <button class="seg-btn" id="field_hapus">−</button></div>
+    </div>
+    <div class="hint">Kotak garis putus-putus pada pratinjau "Sesudah" memakai ukuran lensa ini.</div>
 
     <!-- opsi mode Vektor -->
     <div class="opts" id="opts-vector">
@@ -147,103 +195,367 @@
 
 <script>
 let job = "vector";
-let picked = null;
+let picked = [];
+let hasilNama = [];
 const $ = s => document.querySelector(s);
 
+// Diekstrak dari penangan klik tombol mode supaya tulisSetelan() (pemuatan
+// preset) bisa memicu peralihan panel mode yang sama, bukan cuma set variabel job.
+function pilihMode(j){
+  document.querySelectorAll("#jobseg button").forEach(x=>x.classList.toggle("active", x.dataset.job===j));
+  job=j;
+  $("#opts-vector").style.display = job==="vector"?"block":"none";
+  $("#opts-grayscale").style.display = job==="grayscale"?"block":"none";
+  $("#dropinfo").textContent = job==="vector"
+    ? "Vektor: JPG, PNG, SVG, DXF, PLT" : "Grayscale: JPG, PNG, TIFF";
+}
 document.querySelectorAll("#jobseg button").forEach(b=>{
-  b.onclick=()=>{
-    document.querySelectorAll("#jobseg button").forEach(x=>x.classList.remove("active"));
-    b.classList.add("active"); job=b.dataset.job;
-    $("#opts-vector").style.display = job==="vector"?"block":"none";
-    $("#opts-grayscale").style.display = job==="grayscale"?"block":"none";
-    $("#dropinfo").textContent = job==="vector"
-      ? "Vektor: JPG, PNG, SVG, DXF" : "Grayscale: JPG, PNG, TIFF";
-  };
+  b.onclick=()=>pilihMode(b.dataset.job);
 });
 $("#auto_threshold").onchange = e => { $("#thrbox").style.display = e.target.checked?"none":"block"; };
+
+// Preset: seluruh setelan kontrol disimpan di localStorage, tanpa keadaan di
+// server — operator mengetik ulang lebar/DPI/gamma yang sama tiap hari.
+const PRESET_KEY = "lp_presets";
+// try/catch wajib: localStorage bisa berisi apa saja (rusak manual, diedit tangan,
+// sisa versi lama). JSON.parse yang melempar tanpa ditangkap di sini akan
+// menghentikan SELURUH <script> di tengah jalan, sebelum drop zone/tombol Proses
+// sempat terpasang — alat jadi mati total, bukan cuma presetnya yang hilang.
+const ambilPreset = () => {
+  try {
+    const p = JSON.parse(localStorage.getItem(PRESET_KEY) || "{}");
+    return (p && typeof p === "object" && !Array.isArray(p)) ? p : {};
+  } catch { return {}; }
+};
+const simpanPreset = o => localStorage.setItem(PRESET_KEY, JSON.stringify(o));
+
+function isiDaftarPreset(terpilih) {
+  const p = ambilPreset();
+  // Nama preset diketik operator lalu ditampilkan lagi lewat innerHTML — wajib escapeHtml.
+  $("#preset").innerHTML = '<option value="">— pilih preset —</option>'
+    + Object.keys(p).sort().map(n => '<option>' + escapeHtml(n) + '</option>').join("");
+  if (terpilih) $("#preset").value = terpilih;
+}
+$("#preset").onchange = e => { const p = ambilPreset()[e.target.value]; if (p) tulisSetelan(p); };
+$("#preset_simpan").onclick = () => {
+  const nama = (prompt("Nama preset:", $("#preset").value || "") || "").trim();
+  if (!nama) return;
+  const p = ambilPreset();
+  if (p[nama] && !confirm('Preset "' + nama + '" sudah ada. Timpa?')) return;
+  p[nama] = bacaSetelan(); simpanPreset(p); isiDaftarPreset(nama);
+};
+$("#preset_hapus").onclick = () => {
+  const nama = $("#preset").value;
+  if (!nama || !confirm('Hapus preset "' + nama + '"?')) return;
+  const p = ambilPreset(); delete p[nama]; simpanPreset(p); isiDaftarPreset("");
+};
+isiDaftarPreset("");
+
+// Daftar lensa: operator berganti-ganti lensa, jadi daftarnya bisa ditambah/
+// dihapus lewat UI dan disimpan di localStorage. Isi awal datang dari operator.
+const FIELD_KEY = "lp_fields", FIELD_SEL = "lp_field_sel";
+const FIELD_AWAL = [{ nama: "F110", w: 70, h: 70 }, { nama: "F163", w: 110, h: 110 }];
+// Sama seperti ambilPreset(): tangkap JSON rusak, dan tolak juga bentuk yang salah
+// (mis. angka atau array kosong) — keduanya jatuh kembali ke FIELD_AWAL supaya alat
+// tetap hidup dengan setelan bawaan, bukan mati total. Filter per-elemen wajib juga:
+// array-nya sendiri bisa valid tapi berisi sisa bentuk lama (lp_fields versi lawas
+// tanpa w/h numerik) — satu elemen cacat lolos ke sini berarti aspect-ratio:NaN/NaN
+// dan tata letak kotak area kerja rusak di kotakField().
+const ambilField = () => {
+  try {
+    const a = JSON.parse(localStorage.getItem(FIELD_KEY) || "null");
+    const bersih = Array.isArray(a)
+      ? a.filter(f => f && f.nama && f.w > 0 && f.h > 0)
+      : [];
+    return bersih.length ? bersih : FIELD_AWAL;
+  } catch { return FIELD_AWAL; }
+};
+const simpanField = a => localStorage.setItem(FIELD_KEY, JSON.stringify(a));
+
+function isiDaftarField() {
+  const a = ambilField();
+  // Nama lensa diketik operator lalu ditampilkan lagi lewat innerHTML — wajib escapeHtml.
+  $("#field").innerHTML = a.map(f => '<option>' + escapeHtml(f.nama) + ' — ' + f.w + ' × ' + f.h + ' mm</option>').join("");
+  const s = localStorage.getItem(FIELD_SEL);
+  if (s !== null && a[s]) $("#field").selectedIndex = Number(s);
+}
+// Fallback FIELD_AWAL[0] (F110) — sama dengan yang ditampilkan <select> saat
+// belum ada seleksi eksplisit (index 0), supaya kotak tidak pernah memakai
+// lensa yang berbeda dari yang tertulis di dropdown.
+const fieldTerpilih = () => ambilField()[$("#field").selectedIndex] || FIELD_AWAL[0];
+$("#field").onchange = () => localStorage.setItem(FIELD_SEL, $("#field").selectedIndex);
+$("#field_tambah").onclick = () => {
+  const nama = (prompt("Nama lensa (mis. F254):") || "").trim(); if (!nama) return;
+  const w = parseFloat(prompt("Lebar area kerja (mm):") || "0");
+  const h = parseFloat(prompt("Tinggi area kerja (mm):") || "0");
+  if (!(w > 0 && h > 0)) { alert("Ukuran tidak sah."); return; }
+  const a = ambilField(); a.push({ nama, w, h }); simpanField(a); isiDaftarField();
+};
+$("#field_hapus").onclick = () => {
+  const a = ambilField();
+  if (a.length <= 1) { alert("Sisakan minimal satu lensa."); return; }
+  if (!confirm("Hapus " + a[$("#field").selectedIndex].nama + "?")) return;
+  a.splice($("#field").selectedIndex, 1); simpanField(a);
+  localStorage.setItem(FIELD_SEL, 0); isiDaftarField();
+};
+isiDaftarField();
 
 const drop=$("#drop"), fileInput=$("#file");
 drop.onclick=()=>fileInput.click();
 ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("hover");}));
 ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hover");}));
-drop.addEventListener("drop",e=>{ if(e.dataTransfer.files.length){ setFile(e.dataTransfer.files[0]); }});
-fileInput.onchange=e=>{ if(e.target.files.length) setFile(e.target.files[0]); };
-function setFile(f){
-  picked=f; drop.querySelector("b").textContent="📄 "+f.name; $("#go").disabled=false;
-  // Preview instan file yang diupload (sebelum tekan Proses).
-  const can = /\.(png|jpe?g|bmp|tif?f|webp|svg)$/i.test(f.name);
-  const src = can ? URL.createObjectURL(f) : "";
-  $("#result").innerHTML =
-    '<div class="previews">'
-    + '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
-      + (src ? '<img src="'+src+'">' : '<span class="empty">'+f.name+'</span>')
-      + '</div></div>'
-    + '<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox">'
-      + '<span class="empty">Tekan <b>Proses</b> untuk melihat hasil</span>'
-      + '</div></div>'
-    + '</div>';
+drop.addEventListener("drop", e => { if (e.dataTransfer.files.length) setFiles([...e.dataTransfer.files]); });
+fileInput.onchange = e => { if (e.target.files.length) setFiles([...e.target.files]); };
+function setFiles(fs){
+  picked=fs;
+  drop.querySelector("b").textContent = fs.length===1 ? "📄 "+fs[0].name : "📄 "+fs.length+" berkas";
+  $("#go").disabled=false;
+  if(fs.length===1){
+    // Preview instan file yang diupload (sebelum tekan Proses) — hanya untuk satu berkas.
+    const f=fs[0];
+    const can = /\.(png|jpe?g|bmp|tif?f|webp|svg)$/i.test(f.name);
+    const src = can ? URL.createObjectURL(f) : "";
+    $("#result").innerHTML =
+      '<div class="previews">'
+      + '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
+        + (src ? '<img src="'+src+'">' : '<span class="empty">'+escapeHtml(f.name)+'</span>')
+        + '</div></div>'
+      + '<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox">'
+        + '<span class="empty">Tekan <b>Proses</b> untuk melihat hasil</span>'
+        + '</div></div>'
+      + '</div>';
+  }else{
+    // Banyak berkas: tanpa pratinjau instan, cukup pesan penuntun.
+    $("#result").innerHTML = '<div class="empty">Tekan <b>Proses</b> untuk memulai</div>';
+  }
 }
 
-$("#go").onclick=async()=>{
-  if(!picked) return;
-  const btn=$("#go"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Memproses…';
-  const fd=new FormData();
-  fd.append("file",picked);
-  fd.append("job",job);
-  fd.append("width_mm",$("#width_mm").value||"40");
-  fd.append("height_mm",$("#height_mm").value||"0");
-  if(job==="vector"){
-    fd.append("auto_threshold",$("#auto_threshold").checked);
-    fd.append("threshold",$("#threshold").value||"128");
-    fd.append("invert",$("#invert").checked);
-    fd.append("mirror",$("#mirror_vector").checked);
-    fd.append("filter_speckle",$("#filter_speckle").value||"4");
-  }else{
-    fd.append("dpi",$("#dpi").value||"600");
-    fd.append("gamma",$("#gamma").value||"1.0");
-    fd.append("autocontrast",$("#autocontrast").checked);
-    fd.append("clahe",$("#clahe").checked);
-    fd.append("invert",$("#invert_gray").checked);
-    fd.append("mirror",$("#mirror_gray").checked);
-    fd.append("autotrim",$("#autotrim").checked);
-    fd.append("remove_bg",$("#remove_bg").checked);
+// Satu daftar nama kontrol untuk SEMUA pemakainya. Sebelum ini, submit dan
+// preset akan punya daftar masing-masing, dan salah satunya pasti ketinggalan
+// begitu ada kontrol baru.
+const KONTROL_ANGKA = ["width_mm", "height_mm", "rotate", "threshold", "filter_speckle", "dpi", "gamma"];
+const KONTROL_CENTANG = ["auto_threshold", "invert", "mirror_vector", "autocontrast",
+                         "autotrim", "clahe", "invert_gray", "mirror_gray", "remove_bg"];
+
+function bacaSetelan() {
+  const o = { job };
+  KONTROL_ANGKA.forEach(k => o[k] = $("#" + k).value);
+  KONTROL_CENTANG.forEach(k => o[k] = $("#" + k).checked);
+  return o;
+}
+
+function tulisSetelan(o) {
+  if (o.job) pilihMode(o.job);          // fungsi yang dipakai tombol mode
+  KONTROL_ANGKA.forEach(k => { if (o[k] !== undefined) $("#" + k).value = o[k]; });
+  KONTROL_CENTANG.forEach(k => { if (o[k] !== undefined) $("#" + k).checked = o[k]; });
+  $("#thrbox").style.display = $("#auto_threshold").checked ? "none" : "block";
+}
+
+// Setelan form yang sama dipakai untuk tiap berkas dalam batch, dan juga
+// untuk permintaan ulang tombol "Skalakan". Task 9 menyatukannya dengan preset.
+function bacaSetelanKeFormData() {
+  const o = bacaSetelan(), fd = new FormData();
+  fd.append("job", o.job);
+  fd.append("width_mm", o.width_mm || "40");
+  fd.append("height_mm", o.height_mm || "0");
+  fd.append("rotate", o.rotate || "0");
+  if (o.job === "vector") {
+    fd.append("auto_threshold", o.auto_threshold);
+    fd.append("threshold", o.threshold || "128");
+    fd.append("invert", o.invert);
+    fd.append("mirror", o.mirror_vector);
+    fd.append("filter_speckle", o.filter_speckle || "4");
+  } else {
+    fd.append("dpi", o.dpi || "600");
+    fd.append("gamma", o.gamma || "1.0");
+    fd.append("autocontrast", o.autocontrast);
+    fd.append("clahe", o.clahe);
+    fd.append("invert", o.invert_gray);
+    fd.append("mirror", o.mirror_gray);
+    fd.append("autotrim", o.autotrim);
+    fd.append("remove_bg", o.remove_bg);
   }
-  try{
-    const res=await fetch("/process",{method:"POST",body:fd});
-    const data=await res.json();
-    render(data);
-  }catch(err){
-    $("#result").innerHTML='<div class="err">Gagal menghubungi server: '+err+'</div>';
-  }finally{
-    btn.disabled=false; btn.textContent="Proses";
+  return fd;
+}
+
+// Satu jalur untuk memanggil /process dipakai gelung batch DAN tombol
+// "Skalakan" — sebelum ini keduanya menduplikasi try/catch yang sama persis,
+// dan itu cara paling gampang satu jalur ketinggalan saat baris respons
+// (mis. jatuh ke d.detail) diperbaiki di jalur yang satu lagi tapi lupa di
+// jalur lainnya.
+async function kirimProses(fd) {
+  try {
+    const res = await fetch("/process", { method: "POST", body: fd });
+    return await res.json();
+  } catch (err) {
+    return { ok: false, error: "Gagal menghubungi server: " + err };
   }
+}
+
+$("#go").onclick = async () => {
+  if (!picked.length) return;
+  const btn = $("#go"); btn.disabled = true;
+  $("#result").innerHTML = "";
+  hasilNama = [];
+  let sukses = 0;
+  for (let i = 0; i < picked.length; i++) {
+    btn.innerHTML = '<span class="spin"></span>Memproses ' + (i + 1) + ' dari ' + picked.length + '…';
+    const fd = bacaSetelanKeFormData();       // dipakai bersama; lihat Task 9
+    fd.append("file", picked[i]);
+    fd.append("reset", i === 0);              // hanya file pertama mengosongkan folder sesi
+    const data = await kirimProses(fd);
+    // Satu file gagal TIDAK menghentikan batch — barisnya merah, sisanya lanjut.
+    $("#result").insertAdjacentHTML("beforeend", renderRow(data, picked[i].name));
+    if (data.ok) sukses++;
+  }
+  segarkanHasilNama();
+  if (sukses > 1) $("#result").insertAdjacentHTML("beforeend", tombolZip());
+  btn.disabled = false; btn.textContent = "Proses";
 };
 
-function render(d){
-  const R=$("#result");
-  if(!d.ok){ R.innerHTML='<div class="err">Error: '+(d.error||"tidak diketahui")+'</div>'; return; }
-  let html="";
-  if(!d.passthrough){
-    html+='<div class="previews">';
-    html+='<div class="pv"><h3>Sebelum</h3><div class="imgbox">'+(d.before?'<img src="'+d.before+'">':'—')+'</div></div>';
-    html+='<div class="pv"><h3>Sesudah (siap EZCAD2)</h3><div class="imgbox">'+(d.after?'<img src="'+d.after+'">':'—')+'</div></div>';
-    html+='</div>';
-  }
-  html+='<div class="meta">';
-  if(d.size_mm) html+='<span class="chip">Ukuran: <b>'+d.size_mm[0]+' × '+d.size_mm[1]+' mm</b></span>';
-  if(d.n_paths!=null) html+='<span class="chip">Kontur: <b>'+d.n_paths+'</b></span>';
-  html+='<span class="chip">Mode: <b>'+(d.job==="vector"?"Vektor (DXF)":"Grayscale (PNG)")+'</b></span>';
-  html+='</div>';
-  html+='<div class="dl">';
-  d.downloads.forEach((x,i)=>{ html+='<a class="'+(i>0?"sec":"")+'" href="'+x.url+'" download>⬇ '+x.label+'</a>'; });
-  html+='</div>';
-  if(d.warnings&&d.warnings.length){
-    html+='<div class="warns">';
-    d.warnings.forEach(w=>{ html+='<div class="warn">⚠ '+w+'</div>'; });
-    html+='</div>';
-  }
-  R.innerHTML=html;
+// Batas kepercayaan: nama berkas datang dari pelanggan (operator cuma menyeret,
+// tidak mengetik/memeriksanya), dan pesan galat/peringatan dari server bisa memuat
+// nama/isi berkas itu juga. Semua nilai dari luar WAJIB lewat sini sebelum masuk ke
+// string HTML — dipakai untuk teks maupun atribut (data-nama="..."), makanya tanda
+// kutip ikut di-escape, bukan cuma < dan >.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
 }
+
+// Kotak area kerja: menggambarkan lensa terpilih sebagai persegi garis putus-putus,
+// dengan hasil di dalamnya pada skala sebenarnya — jawaban "muat atau tidak" harus
+// terlihat sebelum berkas masuk mesin. Digerbangi d.size_mm (bukan !d.passthrough):
+// DXF/PLT justru berkas yang paling butuh ini, dan ukurannya kini dilaporkan server.
+function kotakField(d) {
+  const f = fieldTerpilih(), [w, h] = d.size_mm;
+  const lewat = w > f.w + 0.05 || h > f.h + 0.05;
+  // Dulu artwork-nya yang dipotong ke maks 100% — kotak dan artwork jadi terlihat
+  // identik walau artwork-nya 3x lebih besar dari lensa (berbohong secara visual).
+  // Sekarang: bidang gabungan (field-stage) berukuran sisi TERBESAR di antara
+  // lensa dan artwork per sumbu (maxW/maxH) — lensa dan artwork sama-sama
+  // digambar sebagai persentase dari bidang gabungan ini, terpusat lewat
+  // position:absolute (bukan nested+flex: flex-shrink akan memaksa artwork
+  // mengecil lagi supaya muat, meniadakan efek "meluber" yang justru diinginkan).
+  // aspect-ratio field-stage sengaja dari maxW/maxH, BUKAN cuma dari lensa —
+  // supaya tinggi wrapper di jalur normal (tempat teks peringatan mengalir di
+  // bawahnya) selalu cukup menampung artwork yang meluber; kalau tingginya
+  // cuma ikut kotak lensa, artwork yang lebih tinggi akan menutupi teks
+  // peringatannya sendiri (terverifikasi: itulah yang terjadi pada percobaan
+  // pertama sebelum bidang gabungan ini dipakai).
+  // Saat artwork muat (w<=f.w dan h<=f.h): maxW=f.w, maxH=f.h, jadi lensa selalu
+  // 100% dan artwork w/f.w×100% — persis seperti sebelum perbaikan ini, tak ada
+  // regresi di jalur normal.
+  const maxW = Math.max(f.w, w), maxH = Math.max(f.h, h);
+  const isi = d.after
+    ? '<img src="' + escapeHtml(d.after) + '" style="width:100%;height:100%;object-fit:fill">'
+    : '<div class="jejak"></div>';       // DXF: tidak ada gambar, hanya jejak-kaki
+  // f.nama berasal dari daftar lensa yang diketik operator — wajib escapeHtml juga di sini.
+  return '<div class="field-stage" style="aspect-ratio:' + maxW + '/' + maxH + '">'
+       + '<div class="artwork" style="width:' + (w / maxW * 100) + '%;'
+       + 'height:' + (h / maxH * 100) + '%">' + isi + '</div>'
+       + '<div class="field-box' + (lewat ? ' lewat' : '') + '" '
+       + 'style="width:' + (f.w / maxW * 100) + '%;height:' + (f.h / maxH * 100) + '%"></div>'
+       + '</div>'
+       + (lewat ? '<div class="warn">⚠ Lebih besar dari area kerja ' + escapeHtml(f.nama)
+                + ' (' + f.w + ' × ' + f.h + ' mm).</div>' : '');
+}
+
+// Mengembalikan STRING, tidak menulis ke #result: gelung batch yang
+// menempelkannya satu per satu, dan tombol "Skalakan" mengganti satu baris saja.
+function renderRow(d, namaFile) {
+  const namaAman = escapeHtml(namaFile);
+  let html = '<div class="row-hasil" data-nama="' + namaAman + '">';
+  html += '<div class="row-judul">' + namaAman + '</div>';
+  if (!d.ok) {
+    return html + '<div class="err">Error: ' + escapeHtml(d.error || d.detail || "tidak diketahui") + '</div></div>';
+  }
+  if (d.size_mm) {
+    html += '<div class="previews">';
+    html += '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
+          + (d.before ? '<img src="' + escapeHtml(d.before) + '">'
+                      : '<span class="empty">berkas vektor — tanpa pratinjau gambar</span>')
+          + '</div></div>';
+    // Kedua tampilan ditulis sekaligus dan ditukar lewat kelas CSS. Dengan begitu
+    // tombolnya tidak perlu menyimpan `d` atau merender ulang apa pun.
+    html += '<div class="pv"><h3>Sesudah (siap EZCAD2) '
+          + '<button class="pas">pas layar</button></h3>'
+          + '<div class="imgbox">'
+          + '<div class="tampil-field">' + kotakField(d) + '</div>'
+          + '<div class="tampil-penuh">'
+          + (d.after ? '<img src="' + escapeHtml(d.after) + '">' : '—') + '</div>'
+          + '</div></div>';
+    html += '</div>';
+  }
+  html += '<div class="meta">';
+  if (d.size_mm) html += '<span class="chip">Ukuran: <b>' + d.size_mm[0] + ' × ' + d.size_mm[1] + ' mm</b></span>';
+  if (d.n_paths != null) html += '<span class="chip">Kontur: <b>' + d.n_paths + '</b></span>';
+  html += '<span class="chip">Mode: <b>' + (d.job === "vector" ? "Vektor (DXF)" : "Grayscale (PNG)") + '</b></span>';
+  html += '</div>';
+  html += '<div class="dl">';
+  d.downloads.forEach((x, i) => {
+    html += '<a class="' + (i > 0 ? "sec" : "") + '" href="' + escapeHtml(x.url) + '" download>⬇ ' + escapeHtml(x.label) + '</a>';
+  });
+  if (d.passthrough) html += '<button class="skala">Skalakan ke ukuran target</button>';
+  html += '</div>';
+  if (d.warnings && d.warnings.length) {
+    html += '<div class="warns">';
+    d.warnings.forEach(w => { html += '<div class="warn">⚠ ' + escapeHtml(w) + '</div>'; });
+    html += '</div>';
+  }
+  return html + '</div>';
+}
+
+function tombolZip() {
+  return '<div class="dl"><button class="go" id="zip" style="width:auto">⬇ Unduh semua (ZIP)</button></div>';
+}
+
+// Dibaca ulang dari DOM, bukan diakumulasi manual: tombol "Skalakan" mengganti
+// satu baris dan mengubah nama berkasnya, dan mencocokkan nama lama secara
+// tekstual tidak bisa diandalkan — server menyanitasi nama lalu menempelkan
+// 6 hex acak (_safe_stem), jadi nama di klien tidak sama dengan nama di server.
+function segarkanHasilNama() {
+  hasilNama = [...document.querySelectorAll("#result .dl a[download]")]
+    .map(a => a.getAttribute("href").split("?")[0].split("/").pop());
+}
+
+$("#result").addEventListener("click", async e => {
+  if (e.target.classList.contains("pas")) {
+    const baris = e.target.closest(".row-hasil");
+    baris.classList.toggle("penuh");
+    e.target.textContent = baris.classList.contains("penuh") ? "skala area kerja" : "pas layar";
+    return;
+  }
+  if (e.target.classList.contains("skala")) {
+    const baris = e.target.closest(".row-hasil");
+    const nama = baris.dataset.nama;
+    const berkas = picked.find(f => f.name === nama);
+    if (!berkas) { alert("Berkas sumber tak ada lagi — unggah ulang."); return; }
+    e.target.disabled = true; e.target.textContent = "Menskalakan…";
+    const fd = bacaSetelanKeFormData();
+    fd.append("file", berkas);
+    fd.append("scale_passthrough", "true");
+    fd.append("reset", "false");           // jangan menghapus hasil batch lainnya
+    const data = await kirimProses(fd);
+    baris.outerHTML = renderRow(data, nama);
+    segarkanHasilNama();     // nama hasil berubah jadi …_scaled.dxf
+    return;
+  }
+  if (e.target.id !== "zip") return;
+  const res = await fetch("/zip", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ names: hasilNama }),
+  });
+  if (!res.ok) { alert("Gagal membuat ZIP."); return; }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "laser-prep.zip";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
 </script>
 </body>
 </html>
