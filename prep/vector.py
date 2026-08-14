@@ -151,7 +151,7 @@ def process_raster_logo(
     invert: bool = False,
     filter_speckle: int = 4,
     corner_threshold: int = 60,
-    points_per_mm: float = 4.0,
+    points_per_mm: float = 12.0,   # alasan angkanya: lihat svg_to_polylines_mm
 ) -> VectorResult:
     os.makedirs(out_dir, exist_ok=True)
     work_png = os.path.join(out_dir, f"{stem}_bw.png")
@@ -251,7 +251,7 @@ def process_svg_input(
     target_height_mm: float | None = None,
     mirror: bool = False,
     rotate: int = 0,
-    points_per_mm: float = 4.0,
+    points_per_mm: float = 12.0,   # alasan angkanya: lihat svg_to_polylines_mm
 ) -> VectorResult:
     os.makedirs(out_dir, exist_ok=True)
     dxf_path = os.path.join(out_dir, f"{stem}.dxf")

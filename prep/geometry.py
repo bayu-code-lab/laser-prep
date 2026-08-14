@@ -37,7 +37,7 @@ def svg_to_polylines_mm(
     svg_path: str,
     target_width_mm: float | None = None,
     target_height_mm: float | None = None,
-    points_per_mm: float = 4.0,
+    points_per_mm: float = 12.0,
 ) -> Tuple[List[Polyline], Tuple[float, float]]:
     """Baca file SVG, ratakan (flatten) semua path jadi polyline dalam mm.
 
@@ -92,8 +92,18 @@ def svg_to_polylines_mm(
             except Exception:
                 length_uu = 0.0
             length_mm = max(length_uu * scale, 0.01)
+            # 12 titik/mm dipilih dari simpangan tali busur (sagitta ≈ c²/8r), bukan
+            # dari selera: menjaga simpangan <= 0.01 mm sampai radius 0.1 mm butuh
+            # ~11 titik/mm. Pada lengkung besar ini jauh berlebih dan itu tak apa —
+            # ongkosnya cuma ukuran berkas, sementara kekurangannya keluar sebagai
+            # sudut kasat mata pada sudut huruf kecil.
+            #
+            # Batas atas 20000 (bukan 6000): pada 12 titik/mm, 6000 mulai menggigit
+            # di kontur sepanjang 500 mm — dan kontur sepanjang itu justru khas
+            # untuk teks kecil yang berkelok, kasus yang paling butuh kerapatan.
+            # Batas ini pengaman runaway, bukan pembatas kualitas.
             n = int(length_mm * points_per_mm)
-            n = max(8, min(n, 6000))
+            n = max(8, min(n, 20000))
             pts: List[Point] = []
             for i in range(n + 1):
                 c = sub.point(i / n)
@@ -297,5 +307,37 @@ if __name__ == "__main__":
     assert rotate_polylines([up], 0) == [up]                # 0 = tanpa perubahan
     assert rotate_polylines([up], 45) == [up]               # derajat tak sah = 0
     assert rotate_polylines([], 90) == []
+
+    # Kerapatan sampling: yang diperiksa BUKAN "jumlah titiknya naik", melainkan
+    # simpangan geometris sebenarnya — seberapa jauh tali busur polyline memotong
+    # ke dalam kurva aslinya (sagitta). Itulah yang keluar sebagai sudut kasat mata
+    # saat diukir. Radius 0.3 mm dipilih karena mewakili kasus terburuk yang nyata:
+    # sudut huruf kecil / serif. Pada lengkung besar simpangan selalu sepele, jadi
+    # menguji lingkaran 20 mm tidak akan pernah menangkap regresi apa pun.
+    with tempfile.TemporaryDirectory() as d:
+        svg = os.path.join(d, "c.svg")
+        with open(svg, "w") as fh:
+            fh.write(
+                '<svg xmlns="http://www.w3.org/2000/svg">'
+                '<path d="M 100,0 A 100,100 0 1 0 99.99,0 Z"/></svg>'
+            )
+        diameter_mm = 0.6                       # radius 0.3 mm
+        polys, size = svg_to_polylines_mm(svg, target_width_mm=diameter_mm)
+        assert abs(size[0] - diameter_mm) < 1e-6, size
+        r = diameter_mm / 2
+        cx = cy = r                             # bbox digeser ke origin oleh tx()
+        # Simpangan ada di TENGAH tali busur, bukan di titik-titiknya: tiap titik
+        # hasil sampling duduk persis di atas kurva, jadi mengukur jaraknya dari
+        # pusat selalu memberi r dan tidak menguji apa pun.
+        pts = polys[0][0]
+        sagitta = max(
+            r - math.hypot((a[0] + b[0]) / 2 - cx, (a[1] + b[1]) / 2 - cy)
+            for a, b in zip(pts, pts[1:])
+        )
+        assert sagitta < 0.01, (
+            f"simpangan tali busur {sagitta * 1000:.1f} µm pada radius {r} mm — "
+            f"di atas 10 µm, sudutnya akan terbaca saat diukir"
+        )
+
 
     print("ok")
