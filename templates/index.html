@@ -7,24 +7,38 @@
 <style>
   :root{
     --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
-    --text:#e7ebf2; --muted:#98a1b3; --accent:#ff7a45; --accent2:#3b82f6; --ok:#22c55e; --warn:#f59e0b;
+    /* accent2 dipakai untuk teks putih di tombol unduh: #3b82f6 cuma 3.68:1
+       (gagal WCAG AA 4.5:1 untuk teks 14px). #2563eb = 4.94:1. */
+    --text:#e7ebf2; --muted:#98a1b3; --accent:#ff7a45; --accent2:#2563eb; --ok:#22c55e; --warn:#f59e0b;
   }
   *{box-sizing:border-box}
   body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
   header{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
   header h1{font-size:17px;margin:0;font-weight:650}
   header .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:2px 8px;border-radius:999px}
-  .wrap{max-width:1080px;margin:0 auto;padding:22px;display:grid;grid-template-columns:360px 1fr;gap:22px}
-  @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+  /* Kolom kiri 320px (bukan 360) + ambang 780px (bukan 900): di bawah ambang
+     layout jatuh ke satu kolom, artinya panel kontrol yang tinggi menumpuk DI ATAS
+     area hasil. Makin rendah ambangnya, makin lama tata letak dua kolom bertahan
+     saat jendela dipakai separuh layar. */
+  .wrap{max-width:1080px;margin:0 auto;padding:22px;display:grid;grid-template-columns:320px 1fr;gap:22px}
+  @media(max-width:780px){.wrap{grid-template-columns:1fr}}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
   .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 14px}
   label{display:block;font-size:13px;margin:12px 0 6px;color:var(--text)}
-  .hint{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.45}
+  .hint{display:block;font-size:12px;color:var(--muted);margin-top:4px;line-height:1.45}
+  /* 14 blok .hint selalu tampil = penyebab utama panel kiri jadi ~1400px dan
+     tombol Proses terdorong ke bawah lipatan. Operator yang sudah hafal bisa
+     mematikannya sekali; pilihannya disimpan di localStorage. */
+  body.ringkas .hint{display:none}
   input[type=number],select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:9px 10px;border-radius:9px;font-size:14px}
   .seg{display:flex;gap:8px}
   .seg button{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--muted);padding:10px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:600}
   .seg button.active{background:var(--accent);border-color:var(--accent);color:#1a0f08}
-  .drop{margin-top:6px;border:1.5px dashed var(--line);border-radius:12px;padding:22px;text-align:center;color:var(--muted);cursor:pointer;transition:.15s;background:var(--panel2)}
+  /* <button>, bukan <div>: drop zone adalah kontrol utama alat ini dan sebagai
+     <div onclick> ia tak pernah kebagian fokus keyboard. Sebagai <button> ia dapat
+     Tab, Enter/Space, dan focus ring bawaan browser gratis — makanya di sini ada
+     reset width/font/display yang biasanya tak perlu. */
+  .drop{display:block;width:100%;font:inherit;margin-top:6px;border:1.5px dashed var(--line);border-radius:12px;padding:22px;text-align:center;color:var(--muted);cursor:pointer;transition:.15s;background:var(--panel2)}
   .drop.hover{border-color:var(--accent);color:var(--text);background:#221a15}
   .drop b{color:var(--text)}
   .row{display:flex;gap:10px}
@@ -33,6 +47,17 @@
   .check input{width:16px;height:16px;accent-color:var(--accent)}
   .go{margin-top:16px;width:100%;background:var(--accent);border:none;color:#1a0f08;font-weight:700;padding:12px;border-radius:10px;font-size:15px;cursor:pointer}
   .go:disabled{opacity:.5;cursor:default}
+  /* Sticky HANYA pada #go, bukan .go: tombol ZIP memakai kelas yang sama tapi hidup
+     di kolom hasil dan tak boleh ikut menempel. box-shadow (bukan padding) yang jadi
+     latar penutup — 12px warna panel di sekeliling tombol menutupi isi kartu yang
+     tergulir lewat di belakangnya, tanpa mengubah tata letak apa pun. */
+  #go{position:sticky;bottom:12px;z-index:10;box-shadow:0 0 0 12px var(--panel)}
+  /* Daftar berkas batch: tanpa ini, memilih 5 berkas hanya menampilkan "5 berkas" —
+     tak terlihat berkas mana, dan satu salah pilih berarti mengulang semuanya. */
+  .fitem{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:6px 2px;border-bottom:1px solid var(--line);word-break:break-all}
+  .fitem span{flex:1}
+  .fitem button{background:none;border:1px solid transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:4px 9px;border-radius:6px}
+  .fitem button:hover{color:var(--text);background:var(--panel2);border-color:var(--line)}
   .opts{border-top:1px solid var(--line);margin-top:14px;padding-top:6px}
   .previews{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   .pv{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px;min-height:220px;display:flex;flex-direction:column}
@@ -74,13 +99,19 @@
   .row-hasil .tampil-penuh{display:none}
   .row-hasil.penuh .tampil-field{display:none}
   .row-hasil.penuh .tampil-penuh{display:block}
-  .pv h3 .pas{float:right;background:var(--panel);border:1px solid var(--line);color:var(--muted);font-size:11px;padding:2px 8px;border-radius:999px;cursor:pointer;text-transform:none;letter-spacing:0}
+  /* Dulu 63x19px dengan warna muted — terbaca sebagai label, bukan tombol, padahal
+     ini satu-satunya cara melihat artwork tanpa kotak lensa. */
+  .pv h3 .pas{float:right;margin-top:-5px;background:var(--panel);border:1px solid var(--line);color:var(--text);font-size:12px;padding:6px 10px;border-radius:999px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:600}
+  .pv h3 .pas:hover{border-color:var(--accent)}
 </style>
 </head>
 <body>
 <header>
-  <h1>🔧 Laser Prep</h1>
+  <h1>Laser Prep</h1>
   <span class="tag">file pelanggan → import-ready EZCAD2</span>
+  <label class="check" style="margin:0 0 0 auto;font-size:12px;color:var(--muted)">
+    <input type="checkbox" id="ringkas" /> Sembunyikan penjelasan
+  </label>
 </header>
 
 <div class="wrap">
@@ -88,7 +119,7 @@
   <div class="card">
     <h2>Preset</h2>
     <div class="row">
-      <div><select id="preset"><option value="">— pilih preset —</option></select></div>
+      <div><select id="preset" aria-label="Preset"><option value="">— pilih preset —</option></select></div>
       <div style="flex:0 0 auto"><button class="seg-btn" id="preset_simpan">Simpan</button>
       <button class="seg-btn" id="preset_hapus">Hapus</button></div>
     </div>
@@ -100,25 +131,26 @@
     </div>
     <div class="hint"><b>Ke Vektor (DXF)</b>: ubah logo/gambar jadi garis kontur (DXF + SVG), ukuran mm tepat. <b>Ke Grayscale (PNG)</b>: ubah foto jadi PNG abu-abu, ukuran fisik mm pada DPI yang benar.</div>
 
-    <div class="drop" id="drop">
-      <div><b>Klik / seret file ke sini</b></div>
-      <div class="hint" id="dropinfo">Vektor: JPG, PNG, SVG, DXF, PLT · Grayscale: JPG, PNG, TIFF</div>
-    </div>
+    <button type="button" class="drop" id="drop">
+      <b>Klik / seret file ke sini</b>
+      <span class="hint" id="dropinfo">Vektor: JPG, PNG, SVG, DXF, PLT · Grayscale: JPG, PNG, TIFF</span>
+    </button>
     <input type="file" id="file" multiple hidden />
+    <div id="daftar"></div>
 
     <div class="row">
       <div>
-        <label>Lebar target (mm)</label>
+        <label for="width_mm">Lebar target (mm)</label>
         <input type="number" id="width_mm" value="40" min="1" step="1" />
       </div>
       <div>
-        <label>Tinggi maks (mm)</label>
+        <label for="height_mm">Tinggi maks (mm)</label>
         <input type="number" id="height_mm" placeholder="opsional" min="1" step="1" />
       </div>
     </div>
     <div class="hint">Ukuran fisik hasil ukiran. <b>Tinggi maks kosong</b>: tinggi ikut rasio otomatis. <b>Diisi</b>: gambar dimuatkan ke dalam kotak lebar × tinggi, rasio tetap dijaga.</div>
 
-    <label>Putar</label>
+    <label for="rotate">Putar</label>
     <select id="rotate">
       <option value="0">0° (tanpa putar)</option>
       <option value="90">90° searah jarum jam</option>
@@ -127,11 +159,11 @@
     </select>
     <div class="hint">Diterapkan sebelum penskalaan, jadi "lebar target" selalu merujuk lebar hasil akhir. Bila cermin juga menyala, putaran dilakukan lebih dulu.</div>
 
-    <label>Area kerja (lensa)</label>
+    <label for="field">Area kerja (lensa)</label>
     <div class="row">
       <div><select id="field"></select></div>
-      <div style="flex:0 0 auto"><button class="seg-btn" id="field_tambah">＋</button>
-      <button class="seg-btn" id="field_hapus">−</button></div>
+      <div style="flex:0 0 auto"><button class="seg-btn" id="field_tambah" aria-label="Tambah lensa" title="Tambah lensa">+</button>
+      <button class="seg-btn" id="field_hapus" aria-label="Hapus lensa terpilih" title="Hapus lensa terpilih">−</button></div>
     </div>
     <div class="hint">Kotak garis putus-putus pada pratinjau "Sesudah" memakai ukuran lensa ini.</div>
 
@@ -140,7 +172,7 @@
       <label class="check"><input type="checkbox" id="auto_threshold" checked /> Threshold otomatis (Otsu)</label>
       <div class="hint">Alat memilih sendiri batas terang/gelap untuk memisahkan gambar dari latar. Biarkan menyala; matikan hanya kalau garis putus atau hasil terlalu tebal/tipis.</div>
       <div id="thrbox" style="display:none">
-        <label>Threshold manual (0–255)</label>
+        <label for="threshold">Threshold manual (0–255)</label>
         <input type="number" id="threshold" value="128" min="0" max="255" />
         <div class="hint">Batas terang/gelap yang kamu atur sendiri. Kecil = ambil lebih banyak (lebih tebal), besar = ambil lebih sedikit (lebih tipis).</div>
       </div>
@@ -148,7 +180,7 @@
       <div class="hint">Biasanya <b>tidak perlu</b> — latar dideteksi otomatis. Centang hanya kalau logomu justru terang di atas latar gelap dan hasilnya kebalik.</div>
       <label class="check"><input type="checkbox" id="mirror_vector" /> Cermin horizontal</label>
       <div class="hint">Membalik gambar kiri-kanan. Dipakai untuk stempel, cetakan, atau benda yang diukir dari sisi belakang. Berkas SVG yang diunduh tidak ikut dicermin — pakai DXF.</div>
-      <label>Buang bintik kecil (filter speckle)</label>
+      <label for="filter_speckle">Buang bintik kecil (filter speckle)</label>
       <input type="number" id="filter_speckle" value="4" min="0" max="30" />
       <div class="hint">Menghapus titik/noda kecil yang bukan bagian logo. Naikkan bila banyak bintik; turunkan bila detail halus ikut hilang.</div>
     </div>
@@ -157,11 +189,11 @@
     <div class="opts" id="opts-grayscale" style="display:none">
       <div class="row">
         <div>
-          <label>DPI</label>
+          <label for="dpi">DPI</label>
           <input type="number" id="dpi" value="600" min="72" max="2400" step="1" />
         </div>
         <div>
-          <label>Gamma</label>
+          <label for="gamma">Gamma</label>
           <input type="number" id="gamma" value="1.0" min="0.2" max="3" step="0.1" />
         </div>
       </div>
@@ -198,6 +230,22 @@ let job = "vector";
 let picked = [];
 let hasilNama = [];
 const $ = s => document.querySelector(s);
+
+// Ikon: ︎ (variation selector-15) memaksa glif TEKS dari font, bukan emoji
+// berwarna. Tanpa itu ⚠ dan ⬇ dirender berbeda-beda antara Windows dan macOS,
+// dan mewarisi ukuran emoji yang tak bisa diatur lewat CSS.
+const IKON_PERINGATAN = "⚠︎ ";
+const IKON_UNDUH = "⬇︎ ";
+
+// Toggle penjelasan: 14 blok .hint membuat panel kiri ~1400px. Operator yang sudah
+// hafal mematikannya sekali, pilihannya bertahan antar sesi.
+const ringkas = $("#ringkas");
+ringkas.checked = localStorage.getItem("lp_ringkas") === "1";
+document.body.classList.toggle("ringkas", ringkas.checked);
+ringkas.onchange = () => {
+  document.body.classList.toggle("ringkas", ringkas.checked);
+  localStorage.setItem("lp_ringkas", ringkas.checked ? "1" : "0");
+};
 
 // Diekstrak dari penangan klik tombol mode supaya tulisSetelan() (pemuatan
 // preset) bisa memicu peralihan panel mode yang sama, bukan cuma set variabel job.
@@ -306,11 +354,34 @@ drop.onclick=()=>fileInput.click();
 ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hover");}));
 drop.addEventListener("drop", e => { if (e.dataTransfer.files.length) setFiles([...e.dataTransfer.files]); });
 fileInput.onchange = e => { if (e.target.files.length) setFiles([...e.target.files]); };
+// Daftar berkas hanya digambar untuk batch (>1): untuk satu berkas namanya sudah
+// tampil di drop zone, dan mengulanginya cuma menambah tinggi panel.
+function gambarDaftar(){
+  $("#daftar").innerHTML = picked.length < 2 ? "" : picked.map((f,i) =>
+    '<div class="fitem"><span>' + escapeHtml(f.name) + '</span>'
+    + '<button type="button" data-i="' + i + '" aria-label="Buang ' + escapeHtml(f.name) + '">×</button></div>'
+  ).join("");
+}
+// Dibuang lewat delegasi: daftarnya digambar ulang tiap perubahan, jadi handler
+// per-tombol akan hilang bersamanya.
+$("#daftar").onclick = e => {
+  const i = e.target.dataset.i;
+  if (i === undefined) return;
+  picked.splice(Number(i), 1);
+  setFiles(picked);
+};
+
 function setFiles(fs){
   picked=fs;
-  drop.querySelector("b").textContent = fs.length===1 ? "📄 "+fs[0].name : "📄 "+fs.length+" berkas";
-  $("#go").disabled=false;
-  if(fs.length===1){
+  // fs.length===0 mungkin terjadi lewat tombol × di daftar — tombol Proses WAJIB
+  // ikut mati lagi, kalau tidak /process dipanggil tanpa berkas.
+  drop.querySelector("b").textContent = fs.length===0 ? "Klik / seret file ke sini"
+    : fs.length===1 ? fs[0].name : fs.length+" berkas";
+  $("#go").disabled = !fs.length;
+  gambarDaftar();
+  if(fs.length===0){
+    $("#result").innerHTML = '<div class="empty">Pilih mode, unggah file, lalu tekan <b>Proses</b>.</div>';
+  }else if(fs.length===1){
     // Preview instan file yang diupload (sebelum tekan Proses) — hanya untuk satu berkas.
     const f=fs[0];
     const can = /\.(png|jpe?g|bmp|tif?f|webp|svg)$/i.test(f.name);
@@ -424,6 +495,11 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// Mengembalikan {stage, warn} TERPISAH, bukan satu string gabungan: stage masuk ke
+// dalam .imgbox (berlatar putih), sedangkan peringatan "lebih besar dari area kerja"
+// harus keluar dari sana dan bergabung dengan .warns di level baris. Sebelum ini
+// banner gelapnya dirender di dalam panel putih pratinjau — terlihat salah tempat
+// justru pada peringatan terpenting di seluruh alat ini.
 // Kotak area kerja: menggambarkan lensa terpilih sebagai persegi garis putus-putus,
 // dengan hasil di dalamnya pada skala sebenarnya — jawaban "muat atau tidak" harus
 // terlihat sebelum berkas masuk mesin. Digerbangi d.size_mm (bukan !d.passthrough):
@@ -452,14 +528,16 @@ function kotakField(d) {
     ? '<img src="' + escapeHtml(d.after) + '" style="width:100%;height:100%;object-fit:fill">'
     : '<div class="jejak"></div>';       // DXF: tidak ada gambar, hanya jejak-kaki
   // f.nama berasal dari daftar lensa yang diketik operator — wajib escapeHtml juga di sini.
-  return '<div class="field-stage" style="aspect-ratio:' + maxW + '/' + maxH + '">'
-       + '<div class="artwork" style="width:' + (w / maxW * 100) + '%;'
-       + 'height:' + (h / maxH * 100) + '%">' + isi + '</div>'
-       + '<div class="field-box' + (lewat ? ' lewat' : '') + '" '
-       + 'style="width:' + (f.w / maxW * 100) + '%;height:' + (f.h / maxH * 100) + '%"></div>'
-       + '</div>'
-       + (lewat ? '<div class="warn">⚠ Lebih besar dari area kerja ' + escapeHtml(f.nama)
-                + ' (' + f.w + ' × ' + f.h + ' mm).</div>' : '');
+  return {
+    stage: '<div class="field-stage" style="aspect-ratio:' + maxW + '/' + maxH + '">'
+         + '<div class="artwork" style="width:' + (w / maxW * 100) + '%;'
+         + 'height:' + (h / maxH * 100) + '%">' + isi + '</div>'
+         + '<div class="field-box' + (lewat ? ' lewat' : '') + '" '
+         + 'style="width:' + (f.w / maxW * 100) + '%;height:' + (f.h / maxH * 100) + '%"></div>'
+         + '</div>',
+    warn: lewat ? '<div class="warn">' + IKON_PERINGATAN + 'Lebih besar dari area kerja '
+                + escapeHtml(f.nama) + ' (' + f.w + ' × ' + f.h + ' mm).</div>' : "",
+  };
 }
 
 // Mengembalikan STRING, tidak menulis ke #result: gelung batch yang
@@ -471,7 +549,9 @@ function renderRow(d, namaFile) {
   if (!d.ok) {
     return html + '<div class="err">Error: ' + escapeHtml(d.error || d.detail || "tidak diketahui") + '</div></div>';
   }
+  let kf = null;
   if (d.size_mm) {
+    kf = kotakField(d);
     html += '<div class="previews">';
     html += '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
           + (d.before ? '<img src="' + escapeHtml(d.before) + '">'
@@ -482,7 +562,7 @@ function renderRow(d, namaFile) {
     html += '<div class="pv"><h3>Sesudah (siap EZCAD2) '
           + '<button class="pas">pas layar</button></h3>'
           + '<div class="imgbox">'
-          + '<div class="tampil-field">' + kotakField(d) + '</div>'
+          + '<div class="tampil-field">' + kf.stage + '</div>'
           + '<div class="tampil-penuh">'
           + (d.after ? '<img src="' + escapeHtml(d.after) + '">' : '—') + '</div>'
           + '</div></div>';
@@ -495,20 +575,21 @@ function renderRow(d, namaFile) {
   html += '</div>';
   html += '<div class="dl">';
   d.downloads.forEach((x, i) => {
-    html += '<a class="' + (i > 0 ? "sec" : "") + '" href="' + escapeHtml(x.url) + '" download>⬇ ' + escapeHtml(x.label) + '</a>';
+    html += '<a class="' + (i > 0 ? "sec" : "") + '" href="' + escapeHtml(x.url) + '" download>' + IKON_UNDUH + escapeHtml(x.label) + '</a>';
   });
   if (d.passthrough) html += '<button class="skala">Skalakan ke ukuran target</button>';
   html += '</div>';
-  if (d.warnings && d.warnings.length) {
-    html += '<div class="warns">';
-    d.warnings.forEach(w => { html += '<div class="warn">⚠ ' + escapeHtml(w) + '</div>'; });
-    html += '</div>';
-  }
+  // Peringatan "lebih besar dari area kerja" (dari kotakField) digabung dengan
+  // peringatan server dalam SATU blok, supaya semua peringatan satu berkas berada
+  // di tempat yang sama alih-alih tersebar di dalam dan di luar pratinjau.
+  let warnHtml = kf ? kf.warn : "";
+  if (d.warnings) d.warnings.forEach(w => { warnHtml += '<div class="warn">' + IKON_PERINGATAN + escapeHtml(w) + '</div>'; });
+  if (warnHtml) html += '<div class="warns">' + warnHtml + '</div>';
   return html + '</div>';
 }
 
 function tombolZip() {
-  return '<div class="dl"><button class="go" id="zip" style="width:auto">⬇ Unduh semua (ZIP)</button></div>';
+  return '<div class="dl"><button class="go" id="zip" style="width:auto">' + IKON_UNDUH + 'Unduh semua (ZIP)</button></div>';
 }
 
 // Dibaca ulang dari DOM, bukan diakumulasi manual: tombol "Skalakan" mengganti
