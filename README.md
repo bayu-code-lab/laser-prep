@@ -112,6 +112,8 @@ dialog file browser). Cocok untuk hari-hari banyak orderan yang mode dan setelan
 - Ruang hasil satu sesi batch dibatasi **200 MB**. Kalau penuh, berkas berikutnya ditolak
   dengan pesan yang jelas di layar — **unduh dulu hasil yang sudah ada** (satu-satu atau
   lewat ZIP), lalu proses sisanya sebagai batch baru.
+- Batas yang sama berlaku untuk **satu berkas**: kiriman yang lebih besar dari sisa ruang
+  ditolak dengan pesan, bukan diproses setengah jalan sampai ruangnya jebol.
 
 ## Preset (setelan tersimpan)
 
@@ -176,9 +178,14 @@ Kalau kamu masukkan **DXF atau PLT** ke mode Ke Vektor, alat ini memperlakukanny
 - DXF **tanpa keterangan satuan** di headernya dilaporkan sebagai **mm** disertai
   **peringatan** di layar — cek manual kalau berkasnya berasal dari software yang biasa
   memakai satuan lain (inch, dsb.), karena alat ini menebak, bukan memastikan.
-- DXF **tidak punya pratinjau gambar** di panel sebelum/sesudah — yang tampil hanya
-  **jejak kotaknya (bounding box)** di dalam kotak area kerja/lensa, supaya kamu tetap
-  bisa cek muat atau tidak walau tidak lihat bentuk aslinya.
+- Panel **"Sesudah"** menampilkan **gambar isi berkasnya** (garis, busur, dan blok
+  ikut digambar) di dalam kotak area kerja — jadi kamu bisa cek "ini benar berkasnya"
+  sekaligus "muat atau tidak" sebelum kirim ke mesin. Yang digambar selalu berkas
+  yang benar-benar kamu unduh: jalur apa adanya menggambar berkas asli, jalur
+  "Skalakan" menggambar hasil skalanya. Panel **"Sebelum"** tetap kosong — tidak ada
+  gambar sumber untuk berkas vektor. Kalau isinya gagal digambar (mis. berkas
+  memakai objek yang tak dikenali), baris hasilnya tetap muncul lengkap dengan
+  ukuran dan tombol unduh, hanya gambarnya yang absen.
 - **Cermin dan rotasi tidak diterapkan** pada berkas passthrough ini — kalau kamu
   menyalakan opsi itu untuk berkas DXF/PLT yang tidak diskalakan, alat memberi
   **peringatan** di layar alih-alih diam-diam mengabaikannya.
@@ -216,7 +223,8 @@ laser-prep/
 ├── app.py                 # web app lokal (FastAPI)
 ├── requirements.txt
 ├── README.md
-├── selfcheck.py           # cek end-to-end: docker compose run --rm --no-deps laser-prep python selfcheck.py
+├── check.sh               # SEMUA cek: docker compose run --rm --no-deps laser-prep ./check.sh
+├── selfcheck.py           # cek end-to-end lewat endpoint (dipanggil check.sh)
 ├── prep/
 │   ├── __init__.py        # routing ekstensi + ekspor fungsi
 │   ├── geometry.py        # SVG→polyline(mm), tulis DXF, render preview

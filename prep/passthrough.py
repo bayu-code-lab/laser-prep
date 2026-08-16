@@ -13,10 +13,13 @@ from typing import List, Tuple
 
 import ezdxf
 import ezdxf.bbox
+import ezdxf.disassemble
 import ezdxf.transform
 from ezdxf import units as ezunits
 
-from .geometry import Polyline, _bbox, fit_polylines, rotate_polylines, write_dxf
+from .geometry import (
+    Polyline, _bbox, fit_polylines, render_preview, rotate_polylines, write_dxf,
+)
 
 PLT_UNIT_MM = 0.025          # 1 satuan plotter HPGL = 0.025 mm (40 satuan/mm)
 
@@ -186,6 +189,76 @@ def read_size(path: str) -> Tuple[float, float, List[str]]:
         return (x1 - x0) * faktor, (y1 - y0) * faktor, warnings
 
     raise ValueError(f"Format {ext} bukan DXF/PLT.")
+
+
+# Pagu titik untuk pratinjau. Bukan pembatas kualitas — pada 900 px, 300 ribu
+# titik sudah jauh melampaui apa pun yang bisa terlihat. Ia pengaman waktu:
+# menggambar DXF yang sangat padat bisa membuat operator menunggu lama demi
+# gambar yang cuma pelengkap. Lewat pagu ini pratinjaunya DIBATALKAN, bukan
+# digambar separuh: gambar separuh tak bisa dibedakan dari berkas yang memang
+# kurang geometri, dan itu jenis salah yang paling mahal di alat ini.
+_MAKS_TITIK_PRATINJAU = 300_000
+
+
+def _dxf_polylines_mm(doc, faktor: float) -> List[Polyline]:
+    """Ratakan modelspace jadi polyline mm — UNTUK PRATINJAU SAJA.
+
+    ezdxf.disassemble yang dipakai, bukan penerjemah entitas buatan sendiri: ia
+    sudah menangani blok bersarang (INSERT), busur, elips, dan spline, dan itu
+    jalur yang ezdxf sendiri pakai untuk keperluan serupa. Jarak perataan
+    dibiarkan default — hasilnya cuma jadi gambar 900 px, tak pernah jadi berkas
+    keluaran (berkas keluaran tetap lewat ezdxf.transform yang menjaga busur
+    tetap busur; lihat scale_to_dxf).
+    """
+    polys: List[Polyline] = []
+    titik = 0
+    primitif = ezdxf.disassemble.to_primitives(
+        ezdxf.disassemble.recursive_decompose(doc.modelspace())
+    )
+    for p in primitif:
+        if p.is_empty:
+            continue
+        pts = [(v.x * faktor, v.y * faktor) for v in p.vertices()]
+        titik += len(pts)
+        if titik > _MAKS_TITIK_PRATINJAU:
+            return []           # -> render_file_preview mengembalikan False
+        if len(pts) >= 2:
+            # closed=False selalu: primitif ezdxf sudah memulangkan verteks
+            # penutupnya sendiri untuk bentuk tertutup, jadi menutupnya sekali
+            # lagi hanya menggambar ulang segmen yang sama.
+            polys.append((pts, False))
+    return polys
+
+
+def render_file_preview(src_path: str, out_png: str) -> bool:
+    """Gambar pratinjau .dxf/.plt ke out_png. Return False bila tak ada yang bisa digambar.
+
+    Kegagalan di sini sengaja tidak menaikkan galat: pratinjau yang hilang jauh
+    lebih murah daripada berkas yang batal diproses gara-gara gambarnya gagal.
+    Pemanggil cukup mengirim hasil tanpa pratinjau.
+    """
+    ext = os.path.splitext(src_path)[1].lower()
+    if ext == ".plt":
+        polys = plt_to_polylines(src_path)
+    elif ext == ".dxf":
+        doc = _read_dxf(src_path)
+        insunits = int(doc.header.get("$INSUNITS", 0) or 0)
+        polys = _dxf_polylines_mm(doc, _INSUNITS_MM.get(insunits, 1.0))
+    else:
+        return False
+
+    box = _bbox(polys)
+    if box is None:
+        return False
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    if w <= 0 or h <= 0:
+        return False
+    # render_preview mengharap koordinat di dalam kotak (0,0)-(w,h); berkas
+    # pelanggan bisa berada di mana saja, termasuk koordinat negatif.
+    polys = [([(x - x0, y - y0) for x, y in pts], c) for pts, c in polys]
+    render_preview(polys, (w, h), out_png)
+    return True
 
 
 def scale_to_dxf(
@@ -454,6 +527,60 @@ if __name__ == "__main__":
         outp = os.path.join(d, "p.dxf")
         sizep = scale_to_dxf(p, outp, target_width_mm=200.0)
         assert abs(sizep[0] - 200.0) < 1e-3 and abs(sizep[1] - 100.0) < 1e-2, sizep
+
+        # --- Pratinjau: geometri di koordinat NEGATIF dan di dalam BLOK (INSERT)
+        # harus tetap tergambar. Keduanya lazim pada kiriman pelanggan dan
+        # keduanya diam-diam menghasilkan kanvas kosong bila perataannya naif:
+        # koordinat negatif jatuh di luar kanvas render_preview, dan INSERT tak
+        # punya verteks sendiri sampai blok bersarangnya diurai.
+        from PIL import Image as _Image
+
+        doc_pv = ezdxf.new("R2010")
+        doc_pv.units = ezunits.MM
+        blok = doc_pv.blocks.new("KOTAK")
+        blok.add_lwpolyline([(0, 0), (10, 0), (10, 6), (0, 6)], close=True)
+        doc_pv.modelspace().add_blockref("KOTAK", (-50, -30))
+        doc_pv.modelspace().add_arc(center=(-40, -20), radius=4,
+                                    start_angle=0, end_angle=180)
+        dxf_pv = os.path.join(d, "pv.dxf")
+        doc_pv.saveas(dxf_pv)
+        png_pv = os.path.join(d, "pv.png")
+        assert render_file_preview(dxf_pv, png_pv) is True
+        # tobytes(), bukan getdata(): getdata sudah deprecated di Pillow 12.
+        assert min(_Image.open(png_pv).convert("L").tobytes()) < 100, \
+            "pratinjau DXF kosong — geometrinya tak tergambar"
+
+        # PLT lewat jalur yang sama.
+        png_plt = os.path.join(d, "p.png")
+        assert render_file_preview(p, png_plt) is True
+        assert min(_Image.open(png_plt).convert("L").tobytes()) < 100, "pratinjau PLT kosong"
+
+        # DXF tanpa geometri: BUKAN galat di sini — pratinjau yang hilang jauh
+        # lebih murah daripada berkas yang batal diproses.
+        doc_pk = ezdxf.new("R2010")
+        dxf_pk = os.path.join(d, "pkosong.dxf")
+        doc_pk.saveas(dxf_pk)
+        assert render_file_preview(dxf_pk, os.path.join(d, "pk.png")) is False
+
+        # Lewat pagu titik: pratinjau DIBATALKAN, bukan digambar separuh. Gambar
+        # separuh tak bisa dibedakan dari berkas yang memang kurang geometri.
+        doc_pd = ezdxf.new("R2010")
+        doc_pd.units = ezunits.MM
+        msp_pd = doc_pd.modelspace()
+        for i in range(60):
+            msp_pd.add_lwpolyline([(j, i) for j in range(200)])
+        dxf_pd = os.path.join(d, "padat.dxf")
+        doc_pd.saveas(dxf_pd)
+        png_pd = os.path.join(d, "padat.png")
+        asli_pagu = _MAKS_TITIK_PRATINJAU
+        try:
+            globals()["_MAKS_TITIK_PRATINJAU"] = 1000     # 60 x 200 titik jauh melewatinya
+            assert render_file_preview(dxf_pd, png_pd) is False
+        finally:
+            globals()["_MAKS_TITIK_PRATINJAU"] = asli_pagu
+        assert not os.path.exists(png_pd), "pratinjau separuh tak boleh ditulis"
+        # Dengan pagu normal berkas yang sama tergambar seperti biasa.
+        assert render_file_preview(dxf_pd, png_pd) is True
 
         # --- DXF tanpa geometri sama sekali = galat, bukan ukuran 0 x 0 ---
         doc_kosong = ezdxf.new("R2010")

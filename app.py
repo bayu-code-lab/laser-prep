@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import tempfile
+import traceback
 import uuid
 import zipfile
 
@@ -30,6 +31,7 @@ from prep import (
     VECTOR_EXT,
     PASSTHROUGH_EXT,
     read_size,
+    render_file_preview,
     scale_to_dxf,
 )
 
@@ -83,6 +85,52 @@ def _dir_size(d: str) -> int:
     return total
 
 
+def _salin_terbatas(src, dst_path: str, batas: int) -> bool:
+    """Salin `src` ke `dst_path`, berhenti begitu melewati `batas` byte.
+
+    Return True bila muat; False bila melewati batas — potongan yang terlanjur
+    ditulis dihapus, jadi folder sesi tidak menyimpan berkas separuh.
+
+    Ukurannya dihitung sendiri sambil menyalin, tidak diambil dari
+    UploadFile.size: nilai itu berasal dari header Content-Length kiriman
+    browser, yang tidak selalu ada dan tidak dijamin jujur. Tanpa batas di sini,
+    satu berkas raksasa lolos begitu saja — cek budget sebelum menulis tak
+    pernah bisa menangkapnya karena folder sesi memang masih kosong.
+    """
+    ditulis = 0
+    with open(dst_path, "wb") as out:
+        while True:
+            chunk = src.read(1024 * 1024)
+            if not chunk:
+                return True
+            ditulis += len(chunk)
+            if ditulis > batas:
+                break
+            out.write(chunk)
+    os.remove(dst_path)
+    return False
+
+
+def _pesan_aman(e: Exception) -> str:
+    """Pesan galat untuk layar operator; detail utuhnya ke log server.
+
+    ValueError = galat yang DIBUAT alat ini sendiri (lihat prep/): sudah
+    berbahasa Indonesia, sudah dijaga bebas path, dan sering satu-satunya
+    petunjuk berguna — diteruskan apa adanya. Galat pustaka (cv2/PIL/vtracer)
+    berbahasa Inggris dan kerap memuat path lengkap /app/_out/<sid>/... : tak
+    berarti buat operator, dan membocorkan id sesi ke layar.
+    """
+    traceback.print_exc()
+    if isinstance(e, ValueError):
+        # Penyaringan BASE tetap dipasang: kalau suatu saat ada ValueError
+        # pustaka yang lolos ke sini, ia tidak ikut membawa path internal.
+        return str(e).replace(OUT_DIR, "").replace(BASE, "")
+    return (
+        "Gagal memproses berkas ini. Coba berkas lain; detail teknisnya ada di "
+        "log server."
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     with open(os.path.join(BASE, "templates", "index.html"), encoding="utf-8") as f:
@@ -94,7 +142,7 @@ def index() -> HTMLResponse:
 
 
 @app.post("/process")
-async def process(
+def process(
     lp_sid: str = Cookie(default=""),
     file: UploadFile = File(...),
     job: str = Form(...),                 # "vector" | "grayscale"
@@ -127,7 +175,8 @@ async def process(
         os.makedirs(sess_dir, exist_ok=True)
     _gc_sessions()
 
-    if _dir_size(sess_dir) >= BATCH_BUDGET:
+    sisa = BATCH_BUDGET - _dir_size(sess_dir)
+    if sisa <= 0:
         # Status 200, bukan 500: ini kondisi yang diharapkan, bukan kesalahan
         # server, dan gelung batch di browser merendernya lewat jalur galat
         # yang sama dengan galat lain.
@@ -142,8 +191,15 @@ async def process(
     stem = _safe_stem(file.filename or "file")
     # Simpan sumber di sess_dir agar preview "sebelum" bisa dilayani lewat /out.
     src_path = os.path.join(sess_dir, f"{stem}{ext}")
-    with open(src_path, "wb") as out:
-        shutil.copyfileobj(file.file, out)
+    if not _salin_terbatas(file.file, src_path, sisa):
+        return JSONResponse({
+            "ok": False,
+            "error": f"Berkas ini lebih besar dari sisa ruang hasil "
+                     f"({sisa / (1024 * 1024):.1f} MB dari jatah "
+                     f"{BATCH_BUDGET // (1024 * 1024)} MB) — tidak diproses. "
+                     f"Unduh hasil yang sudah ada lalu proses sisanya sebagai "
+                     f"batch baru, atau kecilkan berkasnya dulu.",
+        })
 
     try:
         width_mm = max(1.0, float(width_mm))
@@ -165,6 +221,23 @@ async def process(
 
     def url(p: str) -> str:
         return f"/out/{sid}/" + os.path.basename(p)
+
+    def bust(p: str) -> str:  # cache-buster utk preview
+        return url(p) + "?v=" + uuid.uuid4().hex[:6]
+
+    def pratinjau_vektor(berkas: str) -> str | None:
+        """Pratinjau untuk berkas DXF/PLT yang benar-benar dikirim ke operator.
+
+        Gagal menggambar TIDAK menggagalkan permintaan — berkasnya sendiri sudah
+        benar, dan pratinjau yang hilang jauh lebih murah daripada berkas yang
+        batal diproses.
+        """
+        png = os.path.join(sess_dir, f"{stem}_after.png")
+        try:
+            return bust(png) if render_file_preview(berkas, png) else None
+        except Exception:
+            traceback.print_exc()   # ke log server; operator tak perlu tahu
+            return None
 
     try:
         if job == "vector":
@@ -217,7 +290,10 @@ async def process(
                     return JSONResponse({
                         "ok": True, "job": job, "passthrough": False,
                         "downloads": [{"label": "DXF terskala (mm)", "url": url(out_dxf)}],
-                        "before": None, "after": None,
+                        # Yang dipratinjau adalah berkas HASIL, bukan sumbernya:
+                        # itulah yang benar-benar masuk mesin, lengkap dengan
+                        # putaran dan skalanya.
+                        "before": None, "after": pratinjau_vektor(out_dxf),
                         "size_mm": [round(size[0], 2), round(size[1], 2)],
                         "n_paths": None,
                         "warnings": peringatan,
@@ -240,16 +316,13 @@ async def process(
                 return JSONResponse({
                     "ok": True, "job": job, "passthrough": True,
                     "downloads": [{"label": ext.upper().lstrip("."), "url": url(src_path)}],
-                    "before": None, "after": None,
+                    "before": None, "after": pratinjau_vektor(src_path),
                     "size_mm": [round(w_mm, 2), round(h_mm, 2)],
                     "n_paths": None,
                     "warnings": peringatan,
                 })
             else:
                 raise HTTPException(400, f"Format {ext} tak didukung untuk mode Vektor.")
-
-            def bust(p):  # cache-buster utk preview
-                return url(p) + "?v=" + uuid.uuid4().hex[:6]
 
             return JSONResponse({
                 "ok": True, "job": job, "passthrough": False,
@@ -277,9 +350,6 @@ async def process(
             )
             os.remove(src_path)  # sumber tak dipakai lagi; preview 'before' sudah punya thumbnail sendiri
 
-            def bust(p):
-                return url(p) + "?v=" + uuid.uuid4().hex[:6]
-
             return JSONResponse({
                 "ok": True, "job": job, "passthrough": False,
                 "downloads": [{"label": f"PNG grayscale ({r.px[0]}x{r.px[1]} @ {r.dpi}dpi)", "url": url(r.png_path)}],
@@ -294,7 +364,7 @@ async def process(
     except HTTPException:
         raise
     except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        return JSONResponse({"ok": False, "error": _pesan_aman(e)}, status_code=500)
 
 
 @app.post("/zip")
