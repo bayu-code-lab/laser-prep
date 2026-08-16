@@ -3,10 +3,12 @@
 Memanggil fungsi endpoint app.process() LANGSUNG (tanpa server, tanpa httpx, tanpa pytest)
 supaya wiring parameter di app.py ikut teruji — bukan cuma fungsi di prep/.
 
-Jalankan:  docker compose run --rm --no-deps laser-prep python selfcheck.py
+Jalankan lewat ./check.sh — berkas ini cuma satu dari empat kumpulan cek, dan
+menjalankannya sendirian melewatkan cek unit di prep/:
+
+    docker compose run --rm --no-deps laser-prep ./check.sh
 """
 from __future__ import annotations
-import asyncio
 import io
 import json
 import os
@@ -50,7 +52,11 @@ def _call_resp(**kwargs):
         scale_passthrough=False,
     )
     args.update(kwargs)
-    return asyncio.run(appmod.process(**args))
+    # process() sengaja SINKRON (bukan async): kerjanya CPU murni lewat
+    # cv2/vtracer/PIL, dan endpoint sync ditaruh FastAPI di threadpool sehingga
+    # server tetap melayani permintaan lain — termasuk /out/... untuk pratinjau
+    # berkas batch yang sudah selesai — selagi satu berkas diproses.
+    return appmod.process(**args)
 
 
 def _call(**kwargs) -> dict:
@@ -508,6 +514,165 @@ def check_plt_size() -> None:
     assert abs(w - 100.0) < 0.05 and abs(h - 50.0) < 0.05, d["size_mm"]
 
 
+def check_file_tunggal_terlalu_besar() -> None:
+    """Satu berkas raksasa harus ditolak dengan pesan, bukan menjebol tmpfs.
+
+    BATCH_BUDGET sebelumnya cuma diperiksa SEBELUM menulis: folder kosong selalu
+    lolos cek itu, lalu penyalinan berjalan sampai ruang habis dan mati dengan
+    "No space left on device" -- persis kegagalan yang budget-nya dibuat untuk
+    dihindari. Yang dijaga di sini: berkas yang lebih besar dari sisa ruang
+    berhenti di tengah salin, dan potongannya TIDAK ditinggal di folder sesi.
+    """
+    _cleanup()
+    besar = io.BytesIO(b"\x00" * 200_000)
+    asli = appmod.BATCH_BUDGET
+    try:
+        appmod.BATCH_BUDGET = 50_000          # lebih kecil dari berkasnya
+        resp = _call_resp(file=_upload("besar.png", besar), reset=True)
+    finally:
+        appmod.BATCH_BUDGET = asli
+    # 200, sama seperti check_batch_budget: ruang habis adalah kondisi yang
+    # diharapkan, bukan kesalahan server.
+    assert resp.status_code == 200, resp.status_code
+    d = json.loads(resp.body)
+    assert not d["ok"], "berkas melebihi sisa ruang seharusnya ditolak"
+    assert "besar" in d["error"].lower() or "penuh" in d["error"].lower(), d["error"]
+    sisa = os.listdir(os.path.join(appmod.OUT_DIR, SID))
+    assert sisa == [], f"potongan berkas gagal ditinggal di folder sesi: {sisa}"
+
+
+def check_galat_tanpa_path_internal() -> None:
+    """Pesan galat di layar operator tak boleh memuat path internal container.
+
+    prep/passthrough.py sudah menerjemahkan galat ezdxf demi alasan ini; jalur
+    raster/vektor memakai pustaka (cv2/PIL/vtracer) yang pesannya berbahasa
+    Inggris dan kerap memuat path lengkap /app/_out/<sid>/... -- tak berguna buat
+    operator, dan membocorkan id sesi ke layar.
+    """
+    # Dua traceback akan tercetak selama cek ini — itu memang yang diuji:
+    # detailnya WAJIB masuk log server, yang dilarang cuma menampilkannya ke
+    # layar operator. Bukan tanda cek-nya gagal.
+    # flush: traceback keluar lewat stderr yang tak berbuffer, catatan ini lewat
+    # stdout yang berbuffer — tanpa flush ia muncul SESUDAH traceback yang
+    # hendak dijelaskannya.
+    print("  (dua traceback berikut disengaja — lihat check_galat_tanpa_path_internal)",
+          flush=True)
+    arr = np.full((60, 60), 60, np.uint8)
+    bocor = f"cannot write {os.path.join(appmod.OUT_DIR, SID, 'x.png')}"
+    asli = appmod.process_photo
+    try:
+        def meledak(*a, **k):
+            raise OSError(bocor)
+        appmod.process_photo = meledak
+        resp = _call_resp(file=_upload("t.png", _png_bytes(arr)))
+    finally:
+        appmod.process_photo = asli
+    assert resp.status_code == 500, resp.status_code
+    pesan = json.loads(resp.body)["error"]
+    assert appmod.OUT_DIR not in pesan and SID not in pesan, f"path internal bocor: {pesan}"
+
+    # Sisi sebaliknya: galat yang DIBUAT alat ini sendiri sudah berbahasa
+    # Indonesia dan bebas path -- jangan ikut diganti pesan generik, operator
+    # kehilangan satu-satunya petunjuk yang berguna.
+    d = _call(file=_upload("rusak.png", io.BytesIO(b"bukan gambar sama sekali")))
+    assert not d["ok"], d
+    assert "gagal membaca gambar" in d["error"].lower(), d["error"]
+
+
+def check_remove_bg() -> None:
+    """Hapus background: latar seragam jadi putih, subjek tetap utuh."""
+    img = np.full((200, 200, 3), (60, 90, 200), np.uint8)   # latar seragam
+    img[70:130, 70:130] = (20, 20, 20)                      # subjek gelap di tengah
+    buf = io.BytesIO()
+    Image.fromarray(img).save(buf, format="PNG")
+    hasil = {}
+    for on in (False, True):
+        buf.seek(0)
+        d = _call(file=_upload("bg.png", io.BytesIO(buf.getvalue())), remove_bg=on,
+                  width_mm=50.8, dpi=100, autocontrast=False, autotrim=False)
+        assert d["ok"], d
+        hasil[on] = np.asarray(Image.open(_out_path(d["downloads"][0]["url"])))
+        if on:
+            assert any("background dihapus" in w.lower() for w in d["warnings"]), d["warnings"]
+    # Sudut = latar. Dengan remove_bg ia wajib putih murni; tanpanya tidak.
+    assert hasil[True][2, 2] >= 250, f"latar belum jadi putih: {hasil[True][2, 2]}"
+    assert hasil[False][2, 2] < 250, f"fixture salah — latar sudah putih tanpa remove_bg"
+    # Subjek TIDAK boleh ikut terhapus: itulah beda flood-fill dari segmentasi.
+    assert hasil[True][100, 100] < 60, f"subjek ikut terhapus: {hasil[True][100, 100]}"
+
+
+def check_gamma() -> None:
+    """gamma > 1 mencerahkan, gamma < 1 menggelapkan, gamma = 1 tak mengubah apa pun."""
+    arr = np.full((100, 100), 100, np.uint8)
+    rata = {}
+    for g in (0.5, 1.0, 2.0):
+        d = _call(file=_upload("g.png", _png_bytes(arr)), gamma=g,
+                  width_mm=25.4, dpi=100, autocontrast=False, autotrim=False)
+        assert d["ok"], d
+        rata[g] = float(np.asarray(Image.open(_out_path(d["downloads"][0]["url"]))).mean())
+    assert rata[0.5] < rata[1.0] - 5, f"gamma 0.5 harus menggelapkan: {rata}"
+    assert rata[2.0] > rata[1.0] + 5, f"gamma 2.0 harus mencerahkan: {rata}"
+    assert abs(rata[1.0] - 100.0) < 2, f"gamma 1.0 harus netral: {rata}"
+
+
+def check_clahe() -> None:
+    """CLAHE menaikkan kontras LOKAL, dan itulah yang harus diukur.
+
+    Std GLOBAL justru TURUN kena CLAHE (ia meratakan tanjakan besar sambil
+    mengangkat tekstur halus) — mengukur std global akan menuduh CLAHE gagal
+    padahal ia bekerja persis sebagaimana mestinya. Fixture: tanjakan lembut
+    rentang penuh + tekstur pita tipis, kasus di mana autocontrast global tak
+    bisa menolong apa-apa karena rentangnya memang sudah penuh.
+    """
+    y, x = np.mgrid[0:200, 0:200]
+    arr = (x * 255 // 199).astype(np.uint8)
+    arr = np.clip(arr.astype(np.int16) + ((y // 10) % 2) * 6, 0, 255).astype(np.uint8)
+
+    def kontras_lokal(img: np.ndarray) -> float:
+        f = img.astype(np.float32)
+        return float((f - cv2.blur(f, (31, 31))).std())
+
+    hasil = {}
+    for on in (False, True):
+        d = _call(file=_upload("c.png", _png_bytes(arr)), clahe=on, autocontrast=True,
+                  width_mm=50.8, dpi=100, autotrim=False)
+        assert d["ok"], d
+        hasil[on] = kontras_lokal(np.asarray(Image.open(_out_path(d["downloads"][0]["url"]))))
+    assert hasil[True] > hasil[False] * 1.5, f"CLAHE harus menaikkan kontras lokal: {hasil}"
+
+
+def check_dxf_preview() -> None:
+    """DXF/PLT dapat pratinjau gambar juga — kotak area kerja tanpa gambar cuma
+    menjawab "muat atau tidak", bukan "ini benar berkasnya".
+
+    Yang dipratinjau adalah berkas yang BENAR-BENAR dikirim: jalur apa adanya
+    memratinjau berkas sumber, jalur terskala memratinjau hasil skalanya.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "v.dxf")
+        _tulis_dxf(p, 30.0, 12.0)
+        with open(p, "rb") as f:
+            isi = f.read()
+
+    for skala in (False, True):
+        r = _call(file=_upload("v.dxf", io.BytesIO(isi)), job="vector",
+                  width_mm=60.0, scale_passthrough=skala)
+        assert r["ok"], r
+        assert r["after"], f"DXF (skala={skala}) tanpa pratinjau: {r}"
+        img = Image.open(_out_path(r["after"]))
+        assert img.format == "PNG", img.format
+        # Bukan kanvas kosong: persegi panjangnya harus benar-benar tergambar.
+        assert np.asarray(img.convert("L")).min() < 100, "pratinjau DXF kosong"
+
+    plt = b"IN;SP1;PU0,0;PD4000,0;PD4000,2000;PD0,2000;PD0,0;PU;"
+    r = _call(file=_upload("v.plt", io.BytesIO(plt)), job="vector", width_mm=60.0)
+    assert r["ok"], r
+    assert r["after"], f"PLT tanpa pratinjau: {r}"
+    assert np.asarray(Image.open(_out_path(r["after"])).convert("L")).min() < 100, \
+        "pratinjau PLT kosong"
+
+
 def check_dxf_scale() -> None:
     """Ditekan tombolnya: DXF diskalakan ke lebar target dan terpusat di (0,0)."""
     import tempfile
@@ -548,9 +713,15 @@ if __name__ == "__main__":
         check_batch_reset()
         check_batch_budget()
         check_zip()
+        check_file_tunggal_terlalu_besar()
+        check_galat_tanpa_path_internal()
+        check_remove_bg()
+        check_gamma()
+        check_clahe()
         check_dxf_size()
         check_plt_size()
         check_dxf_scale()
+        check_dxf_preview()
     finally:
         _cleanup()
     print("selfcheck ok")

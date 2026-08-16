@@ -526,7 +526,10 @@ function kotakField(d) {
   const maxW = Math.max(f.w, w), maxH = Math.max(f.h, h);
   const isi = d.after
     ? '<img src="' + escapeHtml(d.after) + '" style="width:100%;height:100%;object-fit:fill">'
-    : '<div class="jejak"></div>';       // DXF: tidak ada gambar, hanya jejak-kaki
+    // Jejak-kaki hanya cadangan: DXF/PLT kini dipratinjau juga (server yang
+    // meratakannya jadi gambar), dan yang jatuh ke sini cuma berkas yang isinya
+    // gagal digambar. Ukuran & tombol unduhnya tetap muncul seperti biasa.
+    : '<div class="jejak"></div>';
   // f.nama berasal dari daftar lensa yang diketik operator — wajib escapeHtml juga di sini.
   return {
     stage: '<div class="field-stage" style="aspect-ratio:' + maxW + '/' + maxH + '">'
