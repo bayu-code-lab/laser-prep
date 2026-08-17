@@ -237,6 +237,18 @@ const $ = s => document.querySelector(s);
 const IKON_PERINGATAN = "⚠︎ ";
 const IKON_UNDUH = "⬇︎ ";
 
+// Id sesi milik TAB INI, bukan cookie. Cookie berlaku se-browser: membuka tab
+// kedua menimpa id tab pertama, dan upload berikutnya (yang mengosongkan folder
+// sesi) memakan hasil tab satunya — tautan unduh mati tanpa pesan apa pun.
+// sessionStorage hidup per tab dan selamat dari refresh, jadi refresh tak sengaja
+// tidak lagi membuang hasil yang belum diunduh.
+const SID = (() => {
+  let s = sessionStorage.getItem("lp_sid");
+  // 32 heksa: app.py menyaring sid dengan pola itu lalu memakainya sebagai nama folder.
+  if (!s) { s = crypto.randomUUID().replace(/-/g, ""); sessionStorage.setItem("lp_sid", s); }
+  return s;
+})();
+
 // Toggle penjelasan: 14 blok .hint membuat panel kiri ~1400px. Operator yang sudah
 // hafal mematikannya sekali, pilihannya bertahan antar sesi.
 const ringkas = $("#ringkas");
@@ -262,20 +274,54 @@ document.querySelectorAll("#jobseg button").forEach(b=>{
 });
 $("#auto_threshold").onchange = e => { $("#thrbox").style.display = e.target.checked?"none":"block"; };
 
-// Preset: seluruh setelan kontrol disimpan di localStorage, tanpa keadaan di
-// server — operator mengetik ulang lebar/DPI/gamma yang sama tiap hari.
-const PRESET_KEY = "lp_presets";
-// try/catch wajib: localStorage bisa berisi apa saja (rusak manual, diedit tangan,
-// sisa versi lama). JSON.parse yang melempar tanpa ditangkap di sini akan
-// menghentikan SELURUH <script> di tengah jalan, sebelum drop zone/tombol Proses
-// sempat terpasang — alat jadi mati total, bukan cuma presetnya yang hilang.
-const ambilPreset = () => {
-  try {
-    const p = JSON.parse(localStorage.getItem(PRESET_KEY) || "{}");
-    return (p && typeof p === "object" && !Array.isArray(p)) ? p : {};
-  } catch { return {}; }
+// Preset & daftar lensa dititipkan ke SERVER (state.json lewat /state), bukan
+// localStorage. localStorage ikut terhapus saat operator membersihkan data situs,
+// dan tak terlihat dari browser atau komputer lain — preset yang disusun
+// berminggu-minggu hilang tanpa peringatan. Server yang menyimpan berarti satu
+// salinan untuk semua browser di mesin ini, dan bisa dicadangkan seperti berkas biasa.
+//
+// STATE dipegang di memori supaya pembacaan tetap sinkron seperti dulu; hanya
+// PENULISAN yang menyentuh jaringan.
+let STATE = { presets: {}, lensa: [], lensaSel: 0 };
+
+// Selama titipan server belum benar-benar terbaca, MENULIS dilarang. STATE saat itu
+// masih bawaan kosong, dan menyimpannya berarti menimpa seluruh preset yang ada di
+// server dengan tak satu pun — kehilangan diam-diam yang jauh lebih mahal daripada
+// satu penyimpanan yang gagal dan bilang. Berkas belum ada (pemasangan baru) BUKAN
+// kasus ini: itu balasan 200 berisi {}, jadi tetap dianggap siap.
+let stateSiap = false;
+
+// Kembalikan true/false, bukan promise polos: pemanggil yang membuang sumber lama
+// (lihat pindahanDariLocalStorage) WAJIB tahu penyimpanannya sungguh berhasil.
+const simpanState = () => {
+  if (!stateSiap) {
+    alert(
+      "Setelan di server belum terbaca — perubahan TIDAK disimpan supaya preset "
+      + "yang sudah ada tidak tertimpa kosong. Muat ulang halaman ini dulu."
+    );
+    return Promise.resolve(false);
+  }
+  return fetch("/state", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(STATE),
+  }).then(r => { if (!r.ok) throw new Error(r.status); return true; })
+    .catch(() => {
+      alert(
+        "Setelan gagal disimpan ke server — preset/lensa yang barusan diubah "
+        + "akan hilang setelah halaman di-refresh."
+      );
+      return false;
+    });
 };
-const simpanPreset = o => localStorage.setItem(PRESET_KEY, JSON.stringify(o));
+
+// Bentuk data tetap divalidasi walau sumbernya server: state.json berkas biasa
+// yang bisa diedit tangan atau tersisa dari versi lama. Satu entri cacat yang
+// lolos berarti aspect-ratio:NaN/NaN dan tata letak kotak area kerja rusak.
+const ambilPreset = () => {
+  const p = STATE.presets;
+  return (p && typeof p === "object" && !Array.isArray(p)) ? p : {};
+};
+const simpanPreset = o => { STATE.presets = o; simpanState(); };
 
 function isiDaftarPreset(terpilih) {
   const p = ambilPreset();
@@ -297,41 +343,33 @@ $("#preset_hapus").onclick = () => {
   if (!nama || !confirm('Hapus preset "' + nama + '"?')) return;
   const p = ambilPreset(); delete p[nama]; simpanPreset(p); isiDaftarPreset("");
 };
-isiDaftarPreset("");
 
 // Daftar lensa: operator berganti-ganti lensa, jadi daftarnya bisa ditambah/
-// dihapus lewat UI dan disimpan di localStorage. Isi awal datang dari operator.
-const FIELD_KEY = "lp_fields", FIELD_SEL = "lp_field_sel";
+// dihapus lewat UI. Ikut dititipkan ke /state bersama preset. Isi awal dari operator.
 const FIELD_AWAL = [{ nama: "F110", w: 70, h: 70 }, { nama: "F163", w: 110, h: 110 }];
-// Sama seperti ambilPreset(): tangkap JSON rusak, dan tolak juga bentuk yang salah
-// (mis. angka atau array kosong) — keduanya jatuh kembali ke FIELD_AWAL supaya alat
-// tetap hidup dengan setelan bawaan, bukan mati total. Filter per-elemen wajib juga:
-// array-nya sendiri bisa valid tapi berisi sisa bentuk lama (lp_fields versi lawas
-// tanpa w/h numerik) — satu elemen cacat lolos ke sini berarti aspect-ratio:NaN/NaN
-// dan tata letak kotak area kerja rusak di kotakField().
+// Tolak bentuk yang salah (mis. angka, array kosong, sisa versi lawas tanpa w/h
+// numerik) dan jatuh kembali ke FIELD_AWAL, supaya alat tetap hidup dengan setelan
+// bawaan alih-alih menggambar kotak area kerja ber-aspect-ratio NaN/NaN.
 const ambilField = () => {
-  try {
-    const a = JSON.parse(localStorage.getItem(FIELD_KEY) || "null");
-    const bersih = Array.isArray(a)
-      ? a.filter(f => f && f.nama && f.w > 0 && f.h > 0)
-      : [];
-    return bersih.length ? bersih : FIELD_AWAL;
-  } catch { return FIELD_AWAL; }
+  const bersih = Array.isArray(STATE.lensa)
+    ? STATE.lensa.filter(f => f && f.nama && f.w > 0 && f.h > 0)
+    : [];
+  return bersih.length ? bersih : FIELD_AWAL;
 };
-const simpanField = a => localStorage.setItem(FIELD_KEY, JSON.stringify(a));
+const simpanField = a => { STATE.lensa = a; simpanState(); };
 
 function isiDaftarField() {
   const a = ambilField();
   // Nama lensa diketik operator lalu ditampilkan lagi lewat innerHTML — wajib escapeHtml.
   $("#field").innerHTML = a.map(f => '<option>' + escapeHtml(f.nama) + ' — ' + f.w + ' × ' + f.h + ' mm</option>').join("");
-  const s = localStorage.getItem(FIELD_SEL);
-  if (s !== null && a[s]) $("#field").selectedIndex = Number(s);
+  const s = STATE.lensaSel;
+  if (a[s]) $("#field").selectedIndex = Number(s);
 }
 // Fallback FIELD_AWAL[0] (F110) — sama dengan yang ditampilkan <select> saat
 // belum ada seleksi eksplisit (index 0), supaya kotak tidak pernah memakai
 // lensa yang berbeda dari yang tertulis di dropdown.
 const fieldTerpilih = () => ambilField()[$("#field").selectedIndex] || FIELD_AWAL[0];
-$("#field").onchange = () => localStorage.setItem(FIELD_SEL, $("#field").selectedIndex);
+$("#field").onchange = () => { STATE.lensaSel = $("#field").selectedIndex; simpanState(); };
 $("#field_tambah").onclick = () => {
   const nama = (prompt("Nama lensa (mis. F254):") || "").trim(); if (!nama) return;
   const w = parseFloat(prompt("Lebar area kerja (mm):") || "0");
@@ -343,10 +381,53 @@ $("#field_hapus").onclick = () => {
   const a = ambilField();
   if (a.length <= 1) { alert("Sisakan minimal satu lensa."); return; }
   if (!confirm("Hapus " + a[$("#field").selectedIndex].nama + "?")) return;
-  a.splice($("#field").selectedIndex, 1); simpanField(a);
-  localStorage.setItem(FIELD_SEL, 0); isiDaftarField();
+  a.splice($("#field").selectedIndex, 1); STATE.lensaSel = 0; simpanField(a);
+  isiDaftarField();
 };
-isiDaftarField();
+
+// Pindahan sekali-jalan dari localStorage — preset & lensa versi sebelum keduanya
+// dititipkan ke server. Tanpa ini, operator yang sudah menyusun preset
+// berminggu-minggu membuka alatnya setelah pembaruan dan mendapati semuanya lenyap,
+// tanpa satu pun petunjuk ke mana perginya.
+function pindahanDariLocalStorage() {
+  const baca = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } };
+  const p = baca("lp_presets"), f = baca("lp_fields");
+  const adaPreset = p && typeof p === "object" && !Array.isArray(p) && Object.keys(p).length;
+  const adaLensa = Array.isArray(f) && f.length;
+  if (!adaPreset && !adaLensa) return;
+  // Server yang SUDAH berisi tidak pernah ditimpa: pindahan ini cuma untuk mengisi
+  // yang masih kosong. Kalau tidak, browser lama yang jarang dipakai bisa
+  // mengembalikan preset usang menimpa yang baru.
+  if (Object.keys(ambilPreset()).length || (Array.isArray(STATE.lensa) && STATE.lensa.length)) return;
+  if (adaPreset) STATE.presets = p;
+  if (adaLensa) STATE.lensa = f;
+  const sel = Number(localStorage.getItem("lp_field_sel"));
+  if (Number.isInteger(sel) && sel >= 0) STATE.lensaSel = sel;
+  simpanState().then(ok => {
+    // Sumber lama HANYA dibuang setelah server benar-benar menerimanya. Membuangnya
+    // lebih awal berarti simpan yang gagal = preset hilang dari kedua tempat.
+    if (!ok) return;
+    ["lp_presets", "lp_fields", "lp_field_sel"].forEach(k => localStorage.removeItem(k));
+    isiDaftarPreset(""); isiDaftarField();
+  });
+}
+
+// Gambar dulu dengan bawaan supaya dropdown tak pernah kosong, lalu gambar ulang
+// begitu titipan server datang.
+isiDaftarPreset(""); isiDaftarField();
+fetch("/state")
+  .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .then(s => {
+    if (s && typeof s === "object" && !Array.isArray(s)) STATE = { ...STATE, ...s };
+    stateSiap = true;
+    pindahanDariLocalStorage();
+  })
+  .catch(() => alert(
+    "Preset & daftar lensa gagal dibaca dari server. Alat tetap bisa dipakai dengan "
+    + "lensa bawaan, tapi perubahan preset TIDAK akan disimpan sampai halaman ini "
+    + "dimuat ulang — ini disengaja, supaya preset yang sudah ada tidak tertimpa kosong."
+  ))
+  .finally(() => { isiDaftarPreset(""); isiDaftarField(); });
 
 const drop=$("#drop"), fileInput=$("#file");
 drop.onclick=()=>fileInput.click();
@@ -426,6 +507,7 @@ function tulisSetelan(o) {
 // untuk permintaan ulang tombol "Skalakan". Task 9 menyatukannya dengan preset.
 function bacaSetelanKeFormData() {
   const o = bacaSetelan(), fd = new FormData();
+  fd.append("lp_sid", SID);
   fd.append("job", o.job);
   fd.append("width_mm", o.width_mm || "40");
   fd.append("height_mm", o.height_mm || "0");
@@ -630,7 +712,7 @@ $("#result").addEventListener("click", async e => {
   const res = await fetch("/zip", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ names: hasilNama }),
+    body: JSON.stringify({ lp_sid: SID, names: hasilNama }),
   });
   if (!res.ok) { alert("Gagal membuat ZIP."); return; }
   const blob = await res.blob();

@@ -8,6 +8,7 @@ Jalankan:  python app.py    lalu buka http://127.0.0.1:8000
 Parameter laser & dithering tetap kamu atur di EZCAD2.
 """
 from __future__ import annotations
+import json
 import os
 import re
 import shutil
@@ -18,7 +19,7 @@ import zipfile
 
 import time
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Cookie, Body
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
@@ -47,6 +48,13 @@ SESSION_TTL = 1800
 BATCH_BUDGET = 200 * 1024 * 1024
 # Nama berkas yang boleh dikemas ke ZIP: basename polos, tanpa pemisah path.
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
+# Preset & daftar lensa milik browser, dititipkan di sebelah app.py (BUKAN di _out:
+# _out adalah tmpfs yang hilang tiap container mati, dan dikosongkan tiap sesi baru).
+STATE_PATH = os.path.join(BASE, "state.json")
+# Batas ukuran titipan. Preset & lensa hanya belasan angka per entri, jadi 256 KB
+# sudah sangat longgar — ini penjaga supaya endpoint tanpa autentikasi tidak bisa
+# dipakai menulis berkas sebesar apa pun ke disk.
+STATE_MAX = 256 * 1024
 
 app = FastAPI(title="Laser Prep")
 app.mount("/out", StaticFiles(directory=OUT_DIR), name="out")
@@ -135,15 +143,17 @@ def _pesan_aman(e: Exception) -> str:
 def index() -> HTMLResponse:
     with open(os.path.join(BASE, "templates", "index.html"), encoding="utf-8") as f:
         resp = HTMLResponse(f.read())
-    # sid baru tiap page load -> refresh = sesi baru, hasil lama jadi yatim & di-GC
-    resp.set_cookie("lp_sid", uuid.uuid4().hex, httponly=True, samesite="lax")
     _gc_sessions()
     return resp
 
 
 @app.post("/process")
 def process(
-    lp_sid: str = Cookie(default=""),
+    # sid datang dari sessionStorage tab pengirim, BUKAN cookie. Cookie berlaku
+    # se-browser: membuka tab kedua menimpa sid tab pertama, lalu upload di tab
+    # mana pun (reset=True) mengosongkan folder sesi yang sedang dipakai tab
+    # satunya — hasil hilang dan tautan unduhnya mati tanpa pesan apa pun.
+    lp_sid: str = Form(default=""),
     file: UploadFile = File(...),
     job: str = Form(...),                 # "vector" | "grayscale"
     reset: bool = Form(True),             # True = kosongkan folder sesi (file pertama batch)
@@ -368,7 +378,7 @@ def process(
 
 
 @app.post("/zip")
-def zip_outputs(lp_sid: str = Cookie(default=""), names: list[str] = Body(..., embed=True)):
+def zip_outputs(lp_sid: str = Body(default=""), names: list[str] = Body(...)):
     """Kemas berkas hasil pilihan dari folder sesi ini jadi satu ZIP.
 
     Daftar nama datang dari browser, bukan hasil tebakan atas isi folder:
@@ -420,7 +430,70 @@ def zip_outputs(lp_sid: str = Cookie(default=""), names: list[str] = Body(..., e
     )
 
 
+@app.get("/state")
+def baca_state():
+    """Setelan milik browser (preset + daftar lensa) yang dititipkan ke server.
+
+    Isinya TIDAK pernah ditafsirkan di sini — server cuma tempat penitipan, dan
+    bentuk datanya urusan index.html sepenuhnya. Sebelum ini keduanya hidup di
+    localStorage: hilang begitu operator membersihkan data situs, dan tak
+    terlihat dari browser atau komputer lain.
+    """
+    try:
+        with open(STATE_PATH, encoding="utf-8") as f:
+            return JSONResponse(json.load(f))
+    except FileNotFoundError:
+        return JSONResponse({})
+    except (json.JSONDecodeError, OSError):
+        # state.json rusak (diedit tangan / tulis terpotong saat mati listrik)
+        # tidak boleh mematikan alatnya: operator kehilangan preset, bukan
+        # kemampuan memproses berkas.
+        traceback.print_exc()
+        return JSONResponse({})
+
+
+@app.post("/state")
+def tulis_state(state: dict = Body(...)):
+    isi = json.dumps(state)
+    if len(isi.encode("utf-8")) > STATE_MAX:
+        raise HTTPException(
+            413, f"Setelan terlalu besar (maks {STATE_MAX // 1024} KB)."
+        )
+    # Tulis ke berkas sementara lalu ganti nama: os.replace bersifat atomik, jadi
+    # mati listrik di tengah penulisan menyisakan state LAMA yang utuh, bukan
+    # state.json separuh yang tak bisa dibaca.
+    #
+    # Nama sementaranya WAJIB unik per permintaan. Satu aksi operator memicu dua
+    # simpan berurutan (mis. preset lalu lensa), keduanya dilayani di threadpool
+    # sekaligus: dengan satu nama tetap, keduanya menulis ke berkas yang sama —
+    # isinya berselang-seling jadi JSON rusak, lalu os.replace yang kalah cepat
+    # gagal dengan FileNotFoundError. Terbukti terjadi pada pemakaian biasa,
+    # bukan skenario karangan.
+    tmp = f"{STATE_PATH}.{uuid.uuid4().hex[:8]}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(isi)
+        os.replace(tmp, STATE_PATH)
+    except OSError:
+        # Disk penuh / tak bisa ditulis: jangan tinggalkan berkas .tmp yatim yang
+        # menumpuk tiap kegagalan.
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    return JSONResponse({"ok": True})
+
+
 if __name__ == "__main__":
+    import threading
     import uvicorn
-    print("\n  Laser Prep berjalan di:  http://127.0.0.1:8000\n")
+    import webbrowser
+
+    url = "http://127.0.0.1:8000"
+    print(f"\n  Laser Prep berjalan di:  {url}\n")
+    # Buka browser sendiri: operator dobel-klik start.bat, alatnya langsung siap.
+    # Timer, bukan panggilan langsung — uvicorn.run memblokir, jadi baris setelahnya
+    # tak akan pernah jalan. 1 detik cukup untuk server siap menerima.
+    threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")

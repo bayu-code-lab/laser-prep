@@ -7,6 +7,7 @@ Parameter laser (power/speed/frequency/hatch) tetap kamu set di EZCAD2.
 """
 from __future__ import annotations
 import os
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
@@ -18,6 +19,25 @@ from .geometry import (
     svg_to_polylines_mm, write_dxf, render_preview, Polyline,
     fit_polylines, mirror_polylines, rotate_polylines, _bbox,
 )
+
+
+def _punya_teks_hidup(svg_path: str) -> bool:
+    """True bila SVG memuat elemen <text>/<tspan>.
+
+    svg2paths2 hanya membaca path & bentuk dasar: teks hidup (font) diabaikan
+    TANPA suara, jadi operator bisa menerima DXF yang kehilangan tulisan
+    pelanggan dan baru sadar setelah barangnya terukir. Deteksi ini murni untuk
+    memberi peringatan — teksnya tetap tidak ikut.
+
+    SVG rusak / bukan XML tidak dianggap galat di sini: yang berhak
+    mengeluhkan itu jalur vektorisasi utama, bukan pemeriksa peringatan.
+    """
+    try:
+        akar = ET.parse(svg_path).getroot()
+    except ET.ParseError:
+        return False
+    # Tag ber-namespace keluar sebagai '{http://www.w3.org/2000/svg}text'.
+    return any(e.tag.rsplit("}", 1)[-1] in ("text", "tspan") for e in akar.iter())
 
 
 @dataclass
@@ -258,6 +278,12 @@ def process_svg_input(
     prev_after = os.path.join(out_dir, f"{stem}_after.png")
 
     warnings: List[str] = []
+    if _punya_teks_hidup(src_path):
+        warnings.append(
+            "SVG ini memuat teks hidup (font) — teks TIDAK ikut ke DXF. "
+            "Convert-to-curves / outline dulu di Illustrator atau Inkscape, "
+            "lalu ekspor ulang SVG-nya."
+        )
     # Sampling memakai target_width_mm supaya kepadatan titiknya kira-kira benar,
     # tapi ukuran AKHIR ditentukan fit_polylines SESUDAH putaran — kalau target
     # tinggi diterapkan di sini, ia akan menafsirkan kotak dalam orientasi sebelum
