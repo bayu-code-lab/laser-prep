@@ -51,14 +51,16 @@ Alat ini menghasilkan file **import-ready**, BUKAN **mark-ready**. Artinya:
 
 ## Menjalankan
 
+**Dobel-klik `start.bat`.** Browser terbuka sendiri ke http://127.0.0.1:8000 — semua
+jalan lokal, tanpa internet.
+
+Jendela hitam yang muncul **harus dibiarkan terbuka** selama alat dipakai; menutupnya
+mematikan servernya. Kalau lebih suka lewat Command Prompt:
+
 ```bat
 venv\Scripts\activate
 python app.py
 ```
-
-Buka browser ke **http://127.0.0.1:8000** . Selesai — semua jalan lokal, tanpa internet.
-
-> Tip: bikin file `start.bat` berisi dua baris di atas supaya tinggal dobel-klik tiap hari.
 
 ---
 
@@ -124,14 +126,20 @@ mengembalikan kondisi lengkap, tidak perlu ganti mode dan isi ulang opsi satu-sa
 
 - **Simpan** memberi nama pada setelan saat ini; **Hapus** membuang preset yang sedang
   dipilih.
-- Preset tersimpan di **browser kamu** (`localStorage`), **bukan di server laser-prep**.
-  Konsekuensinya:
-  - preset yang dibuat di Chrome **tidak muncul** di Firefox/Edge, dan preset di komputer
-    ini **tidak ikut** kalau alat ini dibuka dari komputer lain — preset itu per-browser,
-    per-mesin;
-  - kalau kamu **bersihkan data situs / cache / cookies browser** ini, semua preset ikut
-    **hilang**. Tidak ada cadangan otomatis di server, jadi catat setelan penting di
-    tempat lain kalau memang krusial.
+- Preset (dan **daftar lensa**) tersimpan di berkas **`state.json`** di folder laser-prep,
+  bukan di dalam browser. Artinya:
+  - membersihkan **cache / data situs / cookies** browser **tidak** menghapus preset;
+  - preset yang dibuat di Chrome **ikut muncul** di Firefox/Edge di komputer yang sama;
+  - mau cadangan? **salin `state.json`** seperti berkas biasa. Mau memindahkannya ke
+    komputer lain? Salin berkas itu ke folder laser-prep di sana.
+- Preset **tidak** ikut menyeberang antar komputer dengan sendirinya — tiap mesin punya
+  `state.json` sendiri.
+- Preset & lensa dari versi lama (yang dulu tersimpan di browser) **dipindahkan otomatis**
+  sekali saat pertama kali alat ini dibuka — tak perlu diketik ulang.
+- Kalau `state.json` **gagal dibaca** (mis. server baru saja dinyalakan), alat memberi
+  tahu di layar dan **menolak menyimpan** perubahan preset sampai halaman dimuat ulang.
+  Itu disengaja: menyimpan saat daftar preset belum terbaca akan menimpa semuanya dengan
+  kosong.
 
 ## Area kerja & cek "muat tidak" (lensa)
 
@@ -142,7 +150,7 @@ sebelum berkasnya masuk EZCAD2/mesin.
 
 - Daftar **lensa** ada di panel setelan (dropdown **Area kerja (lensa)**), dengan tombol
   **"＋"** (tambah — ketik nama dan ukurannya) dan **"−"** (hapus yang sedang dipilih) di
-  sampingnya. Isi awalnya:
+  sampingnya. Daftarnya ikut tersimpan di `state.json` bersama preset. Isi awalnya:
   - **F110** — 70 × 70 mm
   - **F163** — 110 × 110 mm
 - Hasil yang **melebihi** kotak lensa membuat kotaknya berubah jadi **garis merah**
@@ -208,8 +216,11 @@ Kalau kamu masukkan **DXF atau PLT** ke mode Ke Vektor, alat ini memperlakukanny
 
 ## Belum didukung (bisa jadi pengembangan lanjutan)
 
-- **Teks hidup** di dalam SVG (font). Untuk sekarang, outline/convert-to-curves dulu di
-  editor (Illustrator/Inkscape) sebelum masuk. Vektorisasi dari raster tidak terpengaruh ini.
+- **Teks hidup** di dalam SVG (font) **tidak ikut ke DXF**. Alat ini **memperingatkan** di
+  layar kalau SVG-mu memuat teks hidup, jadi kamu tahu sebelum berkasnya masuk mesin —
+  tapi teksnya tetap tidak ikut. Outline/convert-to-curves dulu di editor
+  (Illustrator/Inkscape), lalu ekspor ulang SVG-nya. Vektorisasi dari raster tidak
+  terpengaruh ini.
 - **PDF / AI** langsung. Ekspor dulu ke SVG atau PNG.
 - **Level 2 (mark-ready via SDK `MarkEzd.dll`)** — menyuntik artwork ke template `.ezd`
   ber-parameter agar benar-benar "tekan start". Sengaja belum dibuat sesuai kesepakatan.
@@ -221,10 +232,12 @@ Kalau kamu masukkan **DXF atau PLT** ke mode Ke Vektor, alat ini memperlakukanny
 ```
 laser-prep/
 ├── app.py                 # web app lokal (FastAPI)
+├── start.bat              # dobel-klik untuk menjalankan (Windows)
 ├── requirements.txt
 ├── README.md
 ├── check.sh               # SEMUA cek: docker compose run --rm --no-deps laser-prep ./check.sh
 ├── selfcheck.py           # cek end-to-end lewat endpoint (dipanggil check.sh)
+├── state.json             # preset & daftar lensa milik mesin ini (dibuat otomatis)
 ├── prep/
 │   ├── __init__.py        # routing ekstensi + ekspor fungsi
 │   ├── geometry.py        # SVG→polyline(mm), tulis DXF, render preview

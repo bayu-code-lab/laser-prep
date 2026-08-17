@@ -154,6 +154,94 @@ def check_svg_preview_before() -> None:
     assert _out_path(d["before"]) != _out_path(d["after"]), d
 
 
+def check_svg_teks_hidup() -> None:
+    """SVG ber-<text> harus DIPERINGATKAN, bukan diam-diam kehilangan tulisannya.
+
+    svg2paths2 cuma membaca path & bentuk dasar. Tanpa peringatan ini operator
+    menerima DXF tanpa tulisan pelanggan dan baru tahu setelah barang terukir.
+    """
+    tanpa = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+             '<path d="M1,1 L9,1 L9,9 L1,9 Z"/></svg>')
+    dengan = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+              '<path d="M1,1 L9,1 L9,9 L1,9 Z"/><text x="2" y="5">Budi</text></svg>')
+
+    d = _call(file=_upload("t.svg", io.BytesIO(dengan.encode())), job="vector", width_mm=30.0)
+    assert d["ok"], d
+    assert any("teks hidup" in w.lower() for w in d["warnings"]), \
+        f"SVG ber-teks harus diperingatkan: {d['warnings']}"
+
+    # Dan JANGAN diperingatkan saat tak ada teks: peringatan yang muncul di setiap
+    # berkas melatih operator mengabaikan seluruh kolom peringatan.
+    d = _call(file=_upload("p.svg", io.BytesIO(tanpa.encode())), job="vector", width_mm=30.0)
+    assert d["ok"], d
+    assert not any("teks hidup" in w.lower() for w in d["warnings"]), d["warnings"]
+
+
+def check_state() -> None:
+    """Preset & lensa bertahan di server, dan titipan raksasa ditolak."""
+    asli = os.path.exists(appmod.STATE_PATH)
+    cadangan = None
+    if asli:
+        with open(appmod.STATE_PATH, encoding="utf-8") as f:
+            cadangan = f.read()
+    try:
+        os.path.exists(appmod.STATE_PATH) and os.remove(appmod.STATE_PATH)
+        # Belum ada berkasnya: kosong, bukan galat — alat baru dipasang.
+        assert json.loads(appmod.baca_state().body) == {}, "state kosong harus {}"
+
+        isi = {"presets": {"kaca": {"job": "vector", "width_mm": "40"}},
+               "lensa": [{"nama": "F254", "w": 175, "h": 175}], "lensaSel": 0}
+        appmod.tulis_state(state=isi)
+        assert json.loads(appmod.baca_state().body) == isi, "state tidak bertahan"
+
+        # Berkas rusak tidak boleh mematikan alat: preset hilang, kemampuan
+        # memproses berkas tidak. Tracebacknya memang dicetak — baca_state()
+        # mengirimnya ke log server supaya kerusakan state.json bisa dilacak,
+        # yang dilarang cuma menggagalkan permintaannya. Lihat catatan flush di
+        # check_galat_tanpa_path_internal.
+        print("  (traceback berikut disengaja — lihat check_state)", flush=True)
+        with open(appmod.STATE_PATH, "w", encoding="utf-8") as f:
+            f.write("{bukan json")
+        assert json.loads(appmod.baca_state().body) == {}, "state rusak harus jatuh ke {}"
+
+        # Dua simpan berbarengan tak boleh merusak berkasnya. Satu aksi operator
+        # memang memicu dua simpan berurutan (preset lalu lensa) dan FastAPI
+        # melayani keduanya di threadpool sekaligus — versi pertama endpoint ini
+        # memakai satu nama .tmp tetap, dan state.json langsung rusak saat dicoba
+        # di browser sungguhan.
+        import threading
+        mulai = threading.Barrier(6)
+
+        def tulis(i: int) -> None:
+            mulai.wait()
+            appmod.tulis_state(state={"presets": {f"p{i}": {"width_mm": str(i)}}})
+
+        utas = [threading.Thread(target=tulis, args=(i,)) for i in range(6)]
+        for t in utas:
+            t.start()
+        for t in utas:
+            t.join()
+        hasil = json.loads(appmod.baca_state().body)
+        assert hasil != {}, "state kosong setelah simpan berbarengan — berkasnya rusak"
+        assert list(hasil["presets"])[0].startswith("p"), hasil
+        # Tak boleh ada .tmp yatim tertinggal.
+        sisa = [n for n in os.listdir(appmod.BASE) if n.startswith("state.json.")]
+        assert not sisa, f"berkas sementara tertinggal: {sisa}"
+
+        # Endpoint tanpa autentikasi tak boleh jadi jalan menulis berkas sebesar apa pun.
+        try:
+            appmod.tulis_state(state={"x": "y" * (appmod.STATE_MAX + 1)})
+            raise AssertionError("state kegedean harus ditolak")
+        except HTTPException as e:
+            assert e.status_code == 413, e.status_code
+    finally:
+        if cadangan is None:
+            os.path.exists(appmod.STATE_PATH) and os.remove(appmod.STATE_PATH)
+        else:
+            with open(appmod.STATE_PATH, "w", encoding="utf-8") as f:
+                f.write(cadangan)
+
+
 def check_frame_drop_size() -> None:
     """(a): diminta 40 mm, DXF harus benar-benar 40 mm — dan laporan harus jujur."""
     d = _call(file=_upload("f.png", _png_bytes(_framed_img())), job="vector", width_mm=40.0)
@@ -698,6 +786,8 @@ if __name__ == "__main__":
         check_invert_grayscale()
         check_preview_thumb()
         check_svg_preview_before()
+        check_svg_teks_hidup()
+        check_state()
         check_frame_drop_size()
         check_dxf_centered()
         check_frame_drop_density()

@@ -1,0 +1,22 @@
+# check.sh sudah menyatukan semua cek jadi satu perintah, tapi tak ada yang
+# menjalankannya kecuali kalau diingat. Ini yang mengingatkan.
+#
+# Tanpa Docker: image-nya cuma perlu dibangun ulang tiap kali, sementara
+# opencv-python-headless memang dipilih supaya jalan di mesin tanpa GUI.
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: ./check.sh

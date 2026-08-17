@@ -217,5 +217,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 _out/*
+# Preset & daftar lensa milik operator di mesin ini — bukan kode, dan tiap mesin
+# punya lensa yang berbeda-beda.
+state.json
 # Superpowers SDD scratch (ledger, briefs, review packages)
 .superpowers/
