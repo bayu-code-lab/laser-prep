@@ -13,8 +13,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # v4/v5 masih menargetkan Node 20 yang sudah usang: jalan, tapi mencetak
+      # peringatan deprecation di SETIAP kali CI jalan — persis kebiasaan yang
+      # dijaga check.sh supaya tidak tumbuh. v7 keduanya sudah node24.
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
