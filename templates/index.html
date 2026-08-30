@@ -54,8 +54,17 @@
   #go{position:sticky;bottom:12px;z-index:10;box-shadow:0 0 0 12px var(--panel)}
   /* Daftar berkas batch: tanpa ini, memilih 5 berkas hanya menampilkan "5 berkas" —
      tak terlihat berkas mana, dan satu salah pilih berarti mengulang semuanya. */
-  .fitem{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:6px 2px;border-bottom:1px solid var(--line);word-break:break-all}
-  .fitem span{flex:1}
+  .fitem{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:6px 2px;border-bottom:1px solid var(--line);word-break:break-all;cursor:pointer}
+  .fitem .nama{flex:1}
+  /* Berkas yang sedang disetel panel kiri. Tanpa penanda ini, mengubah kontrol
+     terasa seperti mengubah setelan SEMUA berkas — padahal cuma satu. */
+  .fitem.aktif{color:var(--text);border-left:2px solid var(--accent);padding-left:6px}
+  .fbadge{flex:0 0 auto;color:var(--muted);font-size:11px;white-space:nowrap}
+  .fhead{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-top:10px;line-height:1.35}
+  .fhead button{margin-left:auto;flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--text);cursor:pointer;font-size:12px;font-weight:600;padding:5px 9px;border-radius:6px}
+  .batalkan{width:100%;margin-top:8px;background:var(--panel2);border:1px solid var(--line);color:var(--text);font-size:14px;font-weight:600;padding:10px;border-radius:10px;cursor:pointer}
+  .batalkan:disabled{opacity:.5;cursor:default}
+  .catatan{font-size:12px;color:var(--muted);line-height:1.5;margin:12px 0}
   .fitem button{background:none;border:1px solid transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:4px 9px;border-radius:6px}
   .fitem button:hover{color:var(--text);background:var(--panel2);border-color:var(--line)}
   .opts{border-top:1px solid var(--line);margin-top:14px;padding-top:6px}
@@ -227,8 +236,23 @@
 
 <script>
 let job = "vector";
+// Tiap entri {file, setelan}: setelan MENEMPEL ke berkas, bukan dibaca dari panel
+// saat dikirim. Dengan begitu satu batch boleh memuat logo yang butuh threshold
+// manual dan foto yang butuh CLAHE, tanpa dipecah jadi dua kali proses.
 let picked = [];
+// Berkas mana yang sedang disetel panel kiri; perubahan kontrol ditulis ke sana.
+let aktif = 0;
 let hasilNama = [];
+// Baris hasil terakhir (respons /process apa adanya), dititipkan ke sessionStorage.
+// Refresh tak sengaja dulu mengosongkan layar padahal berkasnya masih hidup di
+// folder sesi server — hasil yang belum diunduh jadi tak bisa dijangkau lagi.
+let hasilBaris = [];
+// Dibaca gelung batch tiap sebelum & sesudah satu berkas; lihat tombol Batal.
+let batal = false;
+let jalan = false;
+// URL objek pratinjau instan. Disimpan supaya bisa dicabut sebelum yang baru
+// dibuat — kalau tidak, tiap pergantian berkas menahan salinan blob di memori.
+let objUrl = null;
 const $ = s => document.querySelector(s);
 
 // Ikon: ︎ (variation selector-15) memaksa glif TEKS dari font, bukan emoji
@@ -270,7 +294,7 @@ function pilihMode(j){
     ? "Vektor: JPG, PNG, SVG, DXF, PLT" : "Grayscale: JPG, PNG, TIFF";
 }
 document.querySelectorAll("#jobseg button").forEach(b=>{
-  b.onclick=()=>pilihMode(b.dataset.job);
+  b.onclick=()=>{ pilihMode(b.dataset.job); rekamSetelanAktif(); };
 });
 $("#auto_threshold").onchange = e => { $("#thrbox").style.display = e.target.checked?"none":"block"; };
 
@@ -293,8 +317,9 @@ let stateSiap = false;
 
 // Kembalikan true/false, bukan promise polos: pemanggil yang membuang sumber lama
 // (lihat pindahanDariLocalStorage) WAJIB tahu penyimpanannya sungguh berhasil.
-const simpanState = () => {
+const simpanState = (diam = false) => {
   if (!stateSiap) {
+    if (diam) return Promise.resolve(false);
     alert(
       "Setelan di server belum terbaca — perubahan TIDAK disimpan supaya preset "
       + "yang sudah ada tidak tertimpa kosong. Muat ulang halaman ini dulu."
@@ -306,7 +331,10 @@ const simpanState = () => {
     body: JSON.stringify(STATE),
   }).then(r => { if (!r.ok) throw new Error(r.status); return true; })
     .catch(() => {
-      alert(
+      // `diam` dipakai penyimpanan otomatis (setelan terakhir sesudah batch):
+      // itu kemudahan, bukan perintah operator, dan tak pantas menyela layar
+      // dengan kotak galat tiap kali batch selesai.
+      if (!diam) alert(
         "Setelan gagal disimpan ke server — preset/lensa yang barusan diubah "
         + "akan hilang setelah halaman di-refresh."
       );
@@ -330,7 +358,10 @@ function isiDaftarPreset(terpilih) {
     + Object.keys(p).sort().map(n => '<option>' + escapeHtml(n) + '</option>').join("");
   if (terpilih) $("#preset").value = terpilih;
 }
-$("#preset").onchange = e => { const p = ambilPreset()[e.target.value]; if (p) tulisSetelan(p); };
+$("#preset").onchange = e => {
+  const p = ambilPreset()[e.target.value];
+  if (p) { tulisSetelan(p); rekamSetelanAktif(); }
+};
 $("#preset_simpan").onclick = () => {
   const nama = (prompt("Nama preset:", $("#preset").value || "") || "").trim();
   if (!nama) return;
@@ -420,6 +451,13 @@ fetch("/state")
   .then(s => {
     if (s && typeof s === "object" && !Array.isArray(s)) STATE = { ...STATE, ...s };
     stateSiap = true;
+    // Preset bernama untuk pekerjaan yang berulang; ini untuk "lanjutkan seperti
+    // kemarin" — sebelumnya panel selalu balik ke bawaan tiap alat dibuka, dan
+    // setelan harian yang sama disetel ulang tiap pagi.
+    if (STATE.terakhir) {
+      tulisSetelan(STATE.terakhir);
+      if (picked[aktif]) picked[aktif].setelan = bacaSetelan();
+    }
     pindahanDariLocalStorage();
   })
   .catch(() => alert(
@@ -427,7 +465,10 @@ fetch("/state")
     + "lensa bawaan, tapi perubahan preset TIDAK akan disimpan sampai halaman ini "
     + "dimuat ulang — ini disengaja, supaya preset yang sudah ada tidak tertimpa kosong."
   ))
-  .finally(() => { isiDaftarPreset(""); isiDaftarField(); });
+  // muatHasil() di .finally, bukan di badan skrip: renderRow menggambar kotak
+  // area kerja dari lensa terpilih, dan lensa itu baru benar setelah titipan
+  // server terbaca (atau gagal terbaca dan jatuh ke bawaan).
+  .finally(() => { isiDaftarPreset(""); isiDaftarField(); muatHasil(); });
 
 const drop=$("#drop"), fileInput=$("#file");
 drop.onclick=()=>fileInput.click();
@@ -435,38 +476,90 @@ drop.onclick=()=>fileInput.click();
 ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hover");}));
 drop.addEventListener("drop", e => { if (e.dataTransfer.files.length) setFiles([...e.dataTransfer.files]); });
 fileInput.onchange = e => { if (e.target.files.length) setFiles([...e.target.files]); };
+// Jatuh MELESET dari kotak drop = browser membuka berkasnya sebagai halaman, dan
+// alat ini hilang bersama berkas terpilih serta hasil yang belum diunduh. Tanpa
+// pesan, tanpa jalan kembali. Kotaknya sendiri tetap bekerja: penangan di atas
+// jalan lebih dulu, ini cuma jaring untuk sisa jendela.
+["dragover","drop"].forEach(ev => window.addEventListener(ev, e => e.preventDefault()));
+
+// Ringkasan setelan sebuah berkas, ditampilkan di barisnya. Gunanya menjawab
+// "berkas mana yang setelannya beda" tanpa harus mengklik satu per satu.
+function ringkasSetelan(o){
+  return (o.job === "vector" ? "Vektor" : "Grayscale") + " · " + (o.width_mm || "?") + " mm";
+}
+
 // Daftar berkas hanya digambar untuk batch (>1): untuk satu berkas namanya sudah
 // tampil di drop zone, dan mengulanginya cuma menambah tinggi panel.
 function gambarDaftar(){
-  $("#daftar").innerHTML = picked.length < 2 ? "" : picked.map((f,i) =>
-    '<div class="fitem"><span>' + escapeHtml(f.name) + '</span>'
-    + '<button type="button" data-i="' + i + '" aria-label="Buang ' + escapeHtml(f.name) + '">×</button></div>'
-  ).join("");
+  if (picked.length < 2) { $("#daftar").innerHTML = ""; return; }
+  $("#daftar").innerHTML =
+    '<div class="fhead">Setelan menempel per berkas — klik nama untuk menyetelnya.'
+    + '<button type="button" id="samakan">Samakan semua</button></div>'
+    + picked.map((p,i) =>
+      '<div class="fitem' + (i===aktif ? ' aktif' : '') + '" data-pilih="' + i + '">'
+      + '<span class="nama">' + escapeHtml(p.file.name) + '</span>'
+      + '<span class="fbadge">' + escapeHtml(ringkasSetelan(p.setelan)) + '</span>'
+      + '<button type="button" data-i="' + i + '" aria-label="Buang ' + escapeHtml(p.file.name) + '">×</button></div>'
+    ).join("");
 }
+
 // Dibuang lewat delegasi: daftarnya digambar ulang tiap perubahan, jadi handler
 // per-tombol akan hilang bersamanya.
 $("#daftar").onclick = e => {
-  const i = e.target.dataset.i;
-  if (i === undefined) return;
-  picked.splice(Number(i), 1);
-  setFiles(picked);
+  if (e.target.id === "samakan") {
+    // Jalan keluar dari kejutan "kuubah lebarnya, kok cuma satu yang berubah".
+    const o = bacaSetelan();
+    picked.forEach(p => p.setelan = { ...o });
+    gambarDaftar();
+    return;
+  }
+  const buang = e.target.dataset.i;
+  if (buang !== undefined) {
+    picked.splice(Number(buang), 1);
+    if (aktif >= picked.length) aktif = Math.max(0, picked.length - 1);
+    segarkanPanelBerkas();
+    return;
+  }
+  const baris = e.target.closest("[data-pilih]");
+  if (!baris) return;
+  aktif = Number(baris.dataset.pilih);
+  tulisSetelan(picked[aktif].setelan);   // panel kini menyetel berkas ini
+  gambarDaftar();
 };
 
+// Berkas BARU dari input/drop: tiap berkas memotret setelan panel saat ini.
+// Membuang satu berkas TIDAK lewat sini — memotret ulang akan menimpa setelan
+// per-berkas yang sudah disusun dengan apa pun yang kebetulan ada di panel.
 function setFiles(fs){
-  picked=fs;
-  // fs.length===0 mungkin terjadi lewat tombol × di daftar — tombol Proses WAJIB
-  // ikut mati lagi, kalau tidak /process dipanggil tanpa berkas.
-  drop.querySelector("b").textContent = fs.length===0 ? "Klik / seret file ke sini"
-    : fs.length===1 ? fs[0].name : fs.length+" berkas";
-  $("#go").disabled = !fs.length;
+  const o = bacaSetelan();
+  picked = fs.map(f => ({ file: f, setelan: { ...o } }));
+  aktif = 0;
+  segarkanPanelBerkas();
+}
+
+function segarkanPanelBerkas(){
+  // picked.length===0 mungkin terjadi lewat tombol × di daftar — tombol Proses
+  // WAJIB ikut mati lagi, kalau tidak /process dipanggil tanpa berkas.
+  drop.querySelector("b").textContent = picked.length===0 ? "Klik / seret file ke sini"
+    : picked.length===1 ? picked[0].file.name : picked.length+" berkas";
+  $("#go").disabled = !picked.length;
+  if (picked[aktif]) tulisSetelan(picked[aktif].setelan);
   gambarDaftar();
-  if(fs.length===0){
+
+  // Memilih berkas baru menimpa area hasil, jadi titipan hasil lama ikut dibuang —
+  // kalau tidak, refresh berikutnya memunculkan kembali hasil yang sudah tak
+  // berhubungan dengan berkas yang sekarang terpilih.
+  hasilBaris = []; hasilNama = [];
+  try { sessionStorage.removeItem("lp_hasil"); } catch {}
+
+  if (objUrl) { URL.revokeObjectURL(objUrl); objUrl = null; }
+  if(picked.length===0){
     $("#result").innerHTML = '<div class="empty">Pilih mode, unggah file, lalu tekan <b>Proses</b>.</div>';
-  }else if(fs.length===1){
+  }else if(picked.length===1){
     // Preview instan file yang diupload (sebelum tekan Proses) — hanya untuk satu berkas.
-    const f=fs[0];
+    const f=picked[0].file;
     const can = /\.(png|jpe?g|bmp|tif?f|webp|svg)$/i.test(f.name);
-    const src = can ? URL.createObjectURL(f) : "";
+    const src = can ? (objUrl = URL.createObjectURL(f)) : "";
     $("#result").innerHTML =
       '<div class="previews">'
       + '<div class="pv"><h3>Sebelum</h3><div class="imgbox">'
@@ -503,10 +596,28 @@ function tulisSetelan(o) {
   $("#thrbox").style.display = $("#auto_threshold").checked ? "none" : "block";
 }
 
-// Setelan form yang sama dipakai untuk tiap berkas dalam batch, dan juga
-// untuk permintaan ulang tombol "Skalakan". Task 9 menyatukannya dengan preset.
-function bacaSetelanKeFormData() {
-  const o = bacaSetelan(), fd = new FormData();
+// Tiap perubahan kontrol ditulis ke berkas yang sedang aktif. Tanpa ini setelan
+// per-berkas cuma ada di struktur data dan tak pernah benar-benar bisa diubah.
+// Dipanggil juga oleh tombol mode dan pemuatan preset — keduanya mengubah panel
+// tanpa memicu event `change` pada kontrol satu per satu.
+function rekamSetelanAktif(){
+  if (!picked[aktif]) return;
+  picked[aktif].setelan = bacaSetelan();
+  gambarDaftar();          // badge ringkasan ikut menyusul
+}
+[...KONTROL_ANGKA, ...KONTROL_CENTANG].forEach(k => {
+  // 'input' DAN 'change': ketikan di kotak angka tak memicu 'change' sampai
+  // fokusnya pindah, dan operator yang menekan Proses langsung akan mengirim
+  // angka lama. 'change' tetap dipasang untuk <select> dan checkbox.
+  $("#" + k).addEventListener("input", rekamSetelanAktif);
+  $("#" + k).addEventListener("change", rekamSetelanAktif);
+});
+
+// Setelan MILIK SATU BERKAS jadi FormData. Menerima objek (bukan membaca panel
+// sendiri) karena berkas yang dikirim belum tentu berkas yang sedang disetel —
+// gelung batch melewati semuanya, panel cuma menampilkan satu.
+function setelanKeFormData(o) {
+  const fd = new FormData();
   fd.append("lp_sid", SID);
   fd.append("job", o.job);
   fd.append("width_mm", o.width_mm || "40");
@@ -536,34 +647,97 @@ function bacaSetelanKeFormData() {
 // dan itu cara paling gampang satu jalur ketinggalan saat baris respons
 // (mis. jatuh ke d.detail) diperbaiki di jalur yang satu lagi tapi lupa di
 // jalur lainnya.
-async function kirimProses(fd) {
+async function kirimProses(fd, signal) {
   try {
-    const res = await fetch("/process", { method: "POST", body: fd });
+    const res = await fetch("/process", { method: "POST", body: fd, signal });
     return await res.json();
   } catch (err) {
     return { ok: false, error: "Gagal menghubungi server: " + err };
   }
 }
 
+// Titipan hasil: yang disimpan RESPONS /process apa adanya, bukan HTML jadi —
+// menggambar ulang lewat renderRow berarti hasil pulihan memakai kotak area kerja
+// lensa yang sedang dipilih sekarang, bukan gambar beku dari sebelum refresh.
+function simpanHasil() {
+  // Kuota penuh / penyimpanan diblokir tidak boleh mematikan apa pun: hasil di
+  // layar tetap utuh, yang hilang cuma kemampuannya selamat dari refresh.
+  try { sessionStorage.setItem("lp_hasil", JSON.stringify(hasilBaris)); } catch {}
+}
+
+function muatHasil() {
+  let baris;
+  try { baris = JSON.parse(sessionStorage.getItem("lp_hasil") || "[]"); } catch { return; }
+  if (!Array.isArray(baris) || !baris.length) return;
+  hasilBaris = baris;
+  $("#result").innerHTML =
+    '<div class="catatan">Hasil dari sebelum halaman dimuat ulang. Berkasnya masih '
+    + 'ada di server sekitar 30 menit sejak diproses — setelah itu tautan unduhnya '
+    + 'mati dan berkasnya perlu diproses ulang.</div>'
+    + baris.map(b => renderRow(b.data, b.nama)).join("");
+  if (baris.filter(b => b.data && b.data.ok).length > 1) {
+    $("#result").insertAdjacentHTML("beforeend", tombolZip());
+  }
+  segarkanHasilNama();
+}
+
 $("#go").onclick = async () => {
-  if (!picked.length) return;
-  const btn = $("#go"); btn.disabled = true;
+  if (jalan || !picked.length) return;
+  const btn = $("#go");
+  jalan = true; batal = false; btn.disabled = true;
+
+  // Tombol Batal dibuat saat dipakai lalu dibuang, bukan disembunyikan: satu
+  // batch = satu tombol, jadi tak ada keadaan tersisa yang bisa salah.
+  // Terpisah dari #go (bukan tombol yang sama berganti peran) supaya klik kedua
+  // yang tak sengaja tidak membatalkan batch yang baru saja dimulai.
+  let ctrl = new AbortController();
+  const batalBtn = document.createElement("button");
+  batalBtn.className = "batalkan";
+  batalBtn.textContent = "Batal";
+  batalBtn.onclick = () => {
+    batal = true;
+    batalBtn.disabled = true; batalBtn.textContent = "Menghentikan…";
+    ctrl.abort();   // hentikan berkas yang sedang jalan, jangan tunggu selesai
+  };
+  btn.after(batalBtn);
+
   $("#result").innerHTML = "";
-  hasilNama = [];
-  let sukses = 0;
+  hasilNama = []; hasilBaris = [];
+  let sukses = 0, diproses = 0;
   for (let i = 0; i < picked.length; i++) {
+    if (batal) break;
     btn.innerHTML = '<span class="spin"></span>Memproses ' + (i + 1) + ' dari ' + picked.length + '…';
-    const fd = bacaSetelanKeFormData();       // dipakai bersama; lihat Task 9
-    fd.append("file", picked[i]);
+    ctrl = new AbortController();             // satu controller per berkas: yang sudah di-abort tetap abort
+    const fd = setelanKeFormData(picked[i].setelan);   // setelan MILIK berkas ini
+    fd.append("file", picked[i].file);
     fd.append("reset", i === 0);              // hanya file pertama mengosongkan folder sesi
-    const data = await kirimProses(fd);
+    const data = await kirimProses(fd, ctrl.signal);
+    // Dibatalkan di tengah: jangan render baris galat "aborted" — operator yang
+    // menekan Batal tahu persis kenapa berhenti, dan baris merah palsu itu cuma
+    // bikin batch yang sebetulnya baik-baik saja terlihat gagal.
+    if (batal) break;
+    diproses++;
+    hasilBaris.push({ data, nama: picked[i].file.name });
     // Satu file gagal TIDAK menghentikan batch — barisnya merah, sisanya lanjut.
-    $("#result").insertAdjacentHTML("beforeend", renderRow(data, picked[i].name));
+    $("#result").insertAdjacentHTML("beforeend", renderRow(data, picked[i].file.name));
     if (data.ok) sukses++;
   }
   segarkanHasilNama();
+  if (batal) {
+    $("#result").insertAdjacentHTML("beforeend",
+      '<div class="catatan">Dibatalkan — ' + diproses + ' dari ' + picked.length
+      + ' berkas diproses. Hasil di atas tetap bisa diunduh.</div>');
+  }
   if (sukses > 1) $("#result").insertAdjacentHTML("beforeend", tombolZip());
+  simpanHasil();
+
+  // Setelan panel saat ini jadi bawaan saat alat dibuka lagi besok. `diam`:
+  // gagal menyimpan kemudahan tidak pantas menyela layar dengan kotak galat.
+  STATE.terakhir = bacaSetelan();
+  simpanState(true);
+
   btn.disabled = false; btn.textContent = "Proses";
+  batalBtn.remove(); jalan = false;
 };
 
 // Batas kepercayaan: nama berkas datang dari pelanggan (operator cuma menyeret,
@@ -696,16 +870,22 @@ $("#result").addEventListener("click", async e => {
   if (e.target.classList.contains("skala")) {
     const baris = e.target.closest(".row-hasil");
     const nama = baris.dataset.nama;
-    const berkas = picked.find(f => f.name === nama);
-    if (!berkas) { alert("Berkas sumber tak ada lagi — unggah ulang."); return; }
+    // Sesudah refresh, hasil pulih dari sessionStorage tapi berkas sumbernya tidak
+    // ikut — File di JS tak bisa dititipkan. Pesan ini yang menjelaskannya.
+    const entri = picked.find(p => p.file.name === nama);
+    if (!entri) { alert("Berkas sumber tak ada lagi — unggah ulang."); return; }
     e.target.disabled = true; e.target.textContent = "Menskalakan…";
-    const fd = bacaSetelanKeFormData();
-    fd.append("file", berkas);
+    const fd = setelanKeFormData(entri.setelan);
+    fd.append("file", entri.file);
     fd.append("scale_passthrough", "true");
     fd.append("reset", "false");           // jangan menghapus hasil batch lainnya
     const data = await kirimProses(fd);
     baris.outerHTML = renderRow(data, nama);
     segarkanHasilNama();     // nama hasil berubah jadi …_scaled.dxf
+    // Titipan ikut diperbarui, kalau tidak refresh mengembalikan baris versi
+    // SEBELUM diskalakan — lengkap dengan tautan unduh yang salah.
+    const idx = hasilBaris.findIndex(b => b.nama === nama);
+    if (idx >= 0) { hasilBaris[idx] = { data, nama }; simpanHasil(); }
     return;
   }
   if (e.target.id !== "zip") return;
