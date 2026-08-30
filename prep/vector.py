@@ -19,6 +19,8 @@ from .geometry import (
     svg_to_polylines_mm, write_dxf, render_preview, Polyline,
     fit_polylines, mirror_polylines, rotate_polylines, _bbox,
 )
+# raster.py tidak mengimpor modul ini, jadi tak ada impor melingkar.
+from .raster import _thumb
 
 
 def _punya_teks_hidup(svg_path: str) -> bool:
@@ -57,8 +59,13 @@ def _preprocess_bitmap(
     threshold: int = 128,
     auto_threshold: bool = True,
     invert: bool = False,
+    thumb_path: str | None = None,
 ) -> Tuple[int, List[str]]:
     """Ubah logo raster jadi bitmap hitam/putih bersih untuk vtracer.
+
+    `thumb_path` (opsional) ditulisi thumbnail sumbernya. Ditumpangkan di sini
+    karena fungsi ini SUDAH men-decode berkasnya — membacanya sekali lagi dari
+    luar berarti men-decode JPEG 20 MB dua kali demi gambar 900 px.
 
     Return (threshold_terpakai, warnings).
     """
@@ -75,6 +82,9 @@ def _preprocess_bitmap(
         img = (rgb * alpha + white * (1 - alpha)).astype(np.uint8)
     elif img.ndim == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+    if thumb_path:
+        _thumb(img, thumb_path)
 
     # "Foreground-ness" = jarak tiap piksel dari WARNA LATAR (bukan kecerahan).
     # Kenapa: logo berwarna/gradien (mis. cincin oranye) kalau dipukul rata jadi
@@ -178,9 +188,13 @@ def process_raster_logo(
     svg_path = os.path.join(out_dir, f"{stem}.svg")
     dxf_path = os.path.join(out_dir, f"{stem}.dxf")
     prev_after = os.path.join(out_dir, f"{stem}_after.png")
+    # .jpg, bukan .png: pratinjau "sebelum" cuma rujukan mata operator, dan
+    # penilaian gradasi dilakukan di panel "sesudah" (lihat _thumb).
+    prev_before = os.path.join(out_dir, f"{stem}_before.jpg")
 
     used_thr, warnings = _preprocess_bitmap(
-        src_path, work_png, threshold, auto_threshold, invert
+        src_path, work_png, threshold, auto_threshold, invert,
+        thumb_path=prev_before,
     )
 
     # vtracer: mode biner, kurva halus.
@@ -256,7 +270,10 @@ def process_raster_logo(
         dxf_path=dxf_path,
         svg_path=svg_path,
         preview_after=prev_after,
-        preview_before=src_path,
+        # Thumbnail, BUKAN src_path: berkas kiriman pelanggan tak perlu ikut
+        # menghuni folder sesi cuma untuk mengisi kotak pratinjau 300 px.
+        # app.py membuang sumbernya begitu preview_before menunjuk ke tempat lain.
+        preview_before=prev_before,
         size_mm=size_mm,
         n_paths=len(polylines),
         warnings=warnings,

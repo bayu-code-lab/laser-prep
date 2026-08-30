@@ -142,6 +142,33 @@ def check_preview_thumb() -> None:
     assert full[0] == 4724, f"berkas download harus resolusi penuh: {full}"
 
 
+def check_raster_preview_before_ringan() -> None:
+    """Mode Vektor: pratinjau "sebelum" harus thumbnail, dan sumbernya dibuang.
+
+    Sebelum ini `preview_before` menunjuk berkas ASLI. Akibatnya JPG 20 MB kiriman
+    pelanggan (a) tetap menghuni folder sesi dan memakan jatah 200 MB yang
+    seharusnya untuk HASIL, (b) ditarik utuh oleh browser cuma untuk mengisi kotak
+    pratinjau selebar 300 px. Mode Grayscale sudah lama benar; ini menyamakannya.
+
+    Input SVG SENGAJA tidak ikut aturan ini — berkas sumbernya juga yang diunduh
+    (lihat check_svg_preview_before), jadi menghapusnya akan mematikan tautan unduh.
+    """
+    arr = np.full((1400, 1400), 255, np.uint8)
+    cv2.circle(arr, (700, 700), 400, 0, -1)
+    d = _call(file=_upload("logo.png", _png_bytes(arr)), job="vector", width_mm=30.0)
+    assert d["ok"], d
+
+    ukuran = Image.open(_out_path(d["before"])).size
+    assert max(ukuran) <= 900, f"pratinjau 'sebelum' terlalu besar: {ukuran}"
+
+    # Stem dipungut dari nama berkas DXF: app.py menempelkan 6 hex acak, jadi
+    # nama sumber di disk tak bisa ditebak dari "logo.png" saja.
+    dxf = os.path.basename(d["downloads"][0]["url"])
+    sess = os.path.join(appmod.OUT_DIR, SID)
+    sumber = os.path.join(sess, dxf[:-4] + ".png")
+    assert not os.path.exists(sumber), f"sumber raster masih memakan jatah sesi: {sumber}"
+
+
 def check_svg_preview_before() -> None:
     """bug #6: untuk input SVG, panel 'sebelum' harus menunjuk SVG sumber, bukan hasil render."""
     svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
@@ -786,6 +813,7 @@ if __name__ == "__main__":
         check_invert_grayscale()
         check_preview_thumb()
         check_svg_preview_before()
+        check_raster_preview_before_ringan()
         check_svg_teks_hidup()
         check_state()
         check_frame_drop_size()

@@ -157,7 +157,7 @@ def process(
     file: UploadFile = File(...),
     job: str = Form(...),                 # "vector" | "grayscale"
     reset: bool = Form(True),             # True = kosongkan folder sesi (file pertama batch)
-    width_mm: float = Form(50.0),
+    width_mm: float = Form(40.0),   # sama dengan bawaan kotak isian di index.html
     height_mm: float = Form(0.0),          # 0 = tanpa batas tinggi
     mirror: bool = Form(False),
     rotate: int = Form(0),                # 0 | 90 | 180 | 270
@@ -333,6 +333,14 @@ def process(
                 })
             else:
                 raise HTTPException(400, f"Format {ext} tak didukung untuk mode Vektor.")
+
+            # Sumber hanya perlu bertahan bila ia SENDIRI yang dilayani sebagai
+            # pratinjau "sebelum" — itu kasus input SVG, yang berkasnya juga yang
+            # diunduh operator. Untuk raster, prep sudah menulis thumbnail
+            # terpisah, dan menahan JPG 20 MB kiriman pelanggan di folder sesi
+            # cuma memakan jatah batch 200 MB yang seharusnya untuk hasil.
+            if r.preview_before != src_path:
+                os.remove(src_path)
 
             return JSONResponse({
                 "ok": True, "job": job, "passthrough": False,

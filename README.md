@@ -74,6 +74,9 @@ python app.py
 4. Atur opsi bila perlu (threshold, invert, cermin, **putar 0°/90°/180°/270°**, speckle /
    DPI, kontras, gamma, auto-trim, **lensa** area kerja untuk cek muat). Kalau setelan ini
    sering dipakai ulang, simpan sebagai **preset** (lihat bagian **Preset** di bawah).
+   Sedang memproses **batch**? Setelan yang kamu ubah di sini hanya berlaku untuk berkas
+   yang barisnya **bergaris oranye** — klik nama berkas lain untuk menyetelnya, atau
+   tekan **"Samakan semua"** kalau semuanya memang sama.
 5. Tekan **Proses**, cek **preview sesudah** — termasuk kotak area kerja lensa yang
    menunjukkan muat atau tidaknya hasil. Kurang pas? Ubah opsi, proses lagi.
 6. **Download** hasilnya (DXF untuk mode Vektor, PNG untuk mode Grayscale). Kalau
@@ -101,12 +104,24 @@ python app.py
 ## Batch (banyak berkas sekaligus)
 
 Kamu bisa **seret beberapa berkas sekaligus** ke kotak upload (atau pilih banyak lewat
-dialog file browser). Cocok untuk hari-hari banyak orderan yang mode dan setelannya sama.
+dialog file browser). Cocok untuk hari-hari banyak orderan.
 
-- **Satu set setelan berlaku untuk seluruh batch** — tidak ada setelan per berkas.
-  Kelompokkan dulu berkas yang memang butuh threshold/lensa/dll. yang sama sebelum
-  memprosesnya bareng; yang beda setelan, proses sebagai batch terpisah.
+- **Setelan menempel per berkas.** Tiap berkas memotret setelan panel saat ia
+  ditambahkan, lalu diproses dengan potretnya sendiri — satu batch boleh memuat logo
+  yang butuh threshold manual **dan** foto yang butuh CLAHE, tanpa dipecah jadi dua
+  kali proses.
+  - **Klik nama berkas** di daftar untuk menyetelnya: panel kiri berpindah ke setelan
+    berkas itu, dan barisnya diberi garis oranye. Perubahan kontrol apa pun langsung
+    tersimpan ke berkas yang sedang bergaris itu saja.
+  - Tiap baris menampilkan **ringkasan setelannya** (mis. "Vektor · 80 mm"), jadi
+    berkas yang setelannya beda terlihat tanpa perlu diklik satu per satu.
+  - Tombol **"Samakan semua"** menyalin setelan panel saat ini ke **seluruh** berkas
+    dalam daftar — jalan pintas kalau ternyata semuanya memang sama.
 - Berkas diproses **berurutan** dengan progres di layar, mis. "Memproses 5 dari 12…".
+- Tombol **Batal** muncul di bawah tombol Proses selama batch berjalan. Menekannya
+  menghentikan berkas yang sedang jalan **saat itu juga** (tak perlu menunggu selesai);
+  hasil yang sudah jadi tetap ada di layar dan tetap bisa diunduh, dan layar
+  memberitahu berapa dari berapa yang sempat diproses.
 - Tiap berkas mendapat **satu baris hasil**. Berkas yang gagal tampil sebagai **baris
   merah** berisi pesan errornya, dan batch **tetap lanjut** ke berkas berikutnya — satu
   berkas rusak tidak menggagalkan sisanya.
@@ -116,6 +131,12 @@ dialog file browser). Cocok untuk hari-hari banyak orderan yang mode dan setelan
   lewat ZIP), lalu proses sisanya sebagai batch baru.
 - Batas yang sama berlaku untuk **satu berkas**: kiriman yang lebih besar dari sisa ruang
   ditolak dengan pesan, bukan diproses setengah jalan sampai ruangnya jebol.
+- **Hasil selamat dari refresh.** Halaman yang tak sengaja dimuat ulang (atau ditutup
+  lalu dibuka lagi di tab yang sama) memunculkan kembali baris hasil terakhir beserta
+  tautan unduhnya, disertai catatan di atasnya. Berkasnya sendiri hidup **±30 menit**
+  di folder sesi server; lewat itu tautannya mati dan berkasnya perlu diproses ulang.
+  Tombol **"Skalakan ke ukuran target"** pada hasil pulihan tidak bisa dipakai —
+  berkas sumbernya tidak ikut selamat, jadi unggah ulang dulu.
 
 ## Preset (setelan tersimpan)
 
@@ -126,6 +147,10 @@ mengembalikan kondisi lengkap, tidak perlu ganti mode dan isi ulang opsi satu-sa
 
 - **Simpan** memberi nama pada setelan saat ini; **Hapus** membuang preset yang sedang
   dipilih.
+- Di luar preset bernama, alat juga **mengingat setelan terakhir yang kamu pakai
+  memproses** dan memasangnya kembali saat alat dibuka lagi — jadi pekerjaan harian
+  yang setelannya itu-itu saja tidak perlu disetel ulang tiap pagi. Preset tetap
+  berguna untuk berpindah antar jenis pekerjaan yang berbeda.
 - Preset (dan **daftar lensa**) tersimpan di berkas **`state.json`** di folder laser-prep,
   bukan di dalam browser. Artinya:
   - membersihkan **cache / data situs / cookies** browser **tidak** menghapus preset;
